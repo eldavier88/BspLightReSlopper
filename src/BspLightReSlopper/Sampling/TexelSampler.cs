@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using BspLightReSlopper.Bsp;
+using BspLightReSlopper.Collision;
 using BspLightReSlopper.Lightmaps;
 using BspLightReSlopper.Surfaces;
 
@@ -43,7 +44,7 @@ namespace BspLightReSlopper.Sampling
             public int SurfacesSampled { get; init; }
         }
 
-        public static SampleResult Sample(BspFile bsp, SurfaceUnpacker.UnpackResult unpacked, LightmapAtlas atlas, SampleOptions? options = null)
+        public static SampleResult Sample(BspFile bsp, SurfaceUnpacker.UnpackResult unpacked, LightmapAtlas atlas, SampleOptions? options = null, BspCollision? collision = null)
         {
             options ??= new SampleOptions();
             var samples = new List<TexelSample>(Math.Min(options.MaxSamples, 64_000));
@@ -150,6 +151,18 @@ namespace BspLightReSlopper.Sampling
                             }
 
                             byte style = s.LightmapStyle(st);
+                            int cluster = -2;
+                            if (collision != null)
+                            {
+                                // Step the world point a tiny epsilon along the surface normal so
+                                // the sample falls clearly inside the empty leaf adjacent to the
+                                // wall, not on the wall plane itself (where leaf assignment is
+                                // ambiguous and PointLeaf may report the solid side).
+                                var probe = world + t.Normal * 1f;
+                                int leaf = collision.PointLeaf(probe);
+                                if (leaf >= 0 && leaf < bsp.Leafs.Count)
+                                    cluster = bsp.Leafs[leaf].Cluster;
+                            }
                             samples.Add(new TexelSample
                             {
                                 SurfaceIndex = si,
@@ -162,6 +175,7 @@ namespace BspLightReSlopper.Sampling
                                 AtlasX = ax,
                                 AtlasY = ay,
                                 LightmapStyle = style,
+                                Cluster = cluster,
                             });
                             surfaceContributed = true;
                         }

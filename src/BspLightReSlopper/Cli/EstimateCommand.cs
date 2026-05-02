@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using BspLightReSlopper.Bsp;
+using BspLightReSlopper.Collision;
 using BspLightReSlopper.EntityIo;
 using BspLightReSlopper.Estimation;
 using BspLightReSlopper.Heuristics;
@@ -54,10 +55,15 @@ namespace BspLightReSlopper.Cli
             log.Info($"planar={unpacked.Planar} triSoup={unpacked.TriangleSoup} patch(skipped)={unpacked.PatchSkipped} sky(skipped)={unpacked.SkySkipped} noDraw={unpacked.NoDrawSkipped} noLightmap={unpacked.NoLightmapSkipped} other={unpacked.OtherSkipped}");
             log.Info($"triangles emitted: {unpacked.TrianglesEmitted}");
 
+            // ----- Build collision + PVS for visibility-aware estimation -----
+            var collision = new BspCollision(bsp);
+            var vis = new BspVis(bsp);
+            log.Info($"vis: {(vis.HasVis ? $"{vis.NumClusters} clusters / {vis.BytesPerCluster} bytes-per-cluster" : "absent (no -vis stage or single-leaf map; estimator falls back to non-visibility mode)")}");
+
             // ----- Sample texels -----
             log.Section("texel sampling");
             var atlas = LightmapAtlas.FromBsp(bsp);
-            var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples });
+            var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, collision);
             log.Info($"considered: {samples.LitTexelsConsidered}, samples: {samples.Samples.Count}, unlit-skipped: {samples.UnlitSkipped}, outside-tris: {samples.OutOfTriangleSamples}");
             log.Info($"surfaces sampled: {samples.SurfacesSampled}, stages processed: {samples.StagesProcessed}");
             if (samples.Samples.Count == 0)
@@ -89,11 +95,14 @@ namespace BspLightReSlopper.Cli
 
             // ----- Estimate -----
             log.Section("estimator");
+            bool noVis = args.Flag("no-vis");
             var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
             {
                 MaxPivotsPerRound = maxPivots,
                 MaxLights = maxLights,
                 RandomSeed = seed,
+                Collision = noVis ? null : collision,
+                Visibility = noVis ? null : vis,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");

@@ -41,6 +41,12 @@ namespace BspLightReSlopper.Collision
 
         public BspCollision(BspFile bsp) { _bsp = bsp; }
 
+        // Accessors used by the visibility-aware estimator. Not "public API" surface in the
+        // architectural sense, but stable enough that external callers can pass the
+        // collision object they already have rather than carrying a separate BspFile.
+        public int LeafCount => _bsp.Leafs.Count;
+        public int LeafCluster(int leaf) => _bsp.Leafs[leaf].Cluster;
+
         // ---------- point queries ----------
 
         /// <summary>Walk the BSP node tree from root and return the leaf that contains

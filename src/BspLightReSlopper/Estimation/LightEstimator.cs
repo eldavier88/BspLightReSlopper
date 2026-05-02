@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using System.Threading.Tasks;
+using BspLightReSlopper.Collision;
 using BspLightReSlopper.Sampling;
 using BspLightReSlopper.Util;
 
@@ -105,6 +106,16 @@ namespace BspLightReSlopper.Estimation
             /// the residual leakage that greedy peeling leaves between overlapping lights.</summary>
             public bool JointRefitAfter { get; init; } = true;
 
+            /// <summary>BSP collision module for visibility queries. When supplied alongside
+            /// <see cref="Visibility"/>, the per-candidate fit only includes texel samples
+            /// whose leaf cluster is potentially-visible from the candidate L's leaf cluster.
+            /// Cuts false positives sharply on multi-room indoor maps (a candidate behind a
+            /// wall can no longer claim credit for lights on the other side).</summary>
+            public BspCollision? Collision { get; init; }
+
+            /// <summary>BSP PVS lookup. Used in conjunction with <see cref="Collision"/>.</summary>
+            public BspVis? Visibility { get; init; }
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -134,12 +145,17 @@ namespace BspLightReSlopper.Estimation
             var px = new float[n]; var py = new float[n]; var pz = new float[n];
             var nx = new float[n]; var ny = new float[n]; var nz = new float[n];
             var rR = new float[n]; var rG = new float[n]; var rB = new float[n];
+            var clusters = new int[n];
             for (int i = 0; i < n; i++)
             {
                 px[i] = samples[i].World.X; py[i] = samples[i].World.Y; pz[i] = samples[i].World.Z;
                 nx[i] = samples[i].Normal.X; ny[i] = samples[i].Normal.Y; nz[i] = samples[i].Normal.Z;
                 rR[i] = samples[i].Observed.X; rG[i] = samples[i].Observed.Y; rB[i] = samples[i].Observed.Z;
+                clusters[i] = samples[i].Cluster;
             }
+            bool useVis = options.Collision != null && options.Visibility != null && options.Visibility.HasVis;
+            if (useVis)
+                log?.Info($"  visibility-aware mode: {options.Visibility!.NumClusters} clusters, {options.Visibility.BytesPerCluster}B/cluster");
 
             float initialEnergy = SumSq(rR, rG, rB);
             float currentEnergy = initialEnergy;
@@ -198,12 +214,28 @@ namespace BspLightReSlopper.Estimation
                 var ig = new float[K];
                 var ib = new float[K];
 
+                // Per-candidate cluster lookup for the visibility-aware path. Computed once
+                // per round (not per refinement step) — the cost is one PointLeaf per
+                // candidate (~1µs) versus the K-many fit calls (~50µs each), so this is
+                // negligible overhead compared to skipping it would mean re-resolving
+                // clusters in the parallel inner loop.
+                var candClusters = new int[K];
+                if (useVis)
+                {
+                    for (int k = 0; k < K; k++)
+                    {
+                        int leaf = options.Collision!.PointLeaf(cands[k]);
+                        candClusters[k] = (leaf >= 0 && leaf < options.Collision.LeafCount) ? options.Collision.LeafCluster(leaf) : -1;
+                    }
+                }
+
                 if (options.Parallel)
                 {
                     Parallel.For(0, K, k =>
                     {
-                        FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, n, fade2,
+                        FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
                             supportR2, options.MaxIntensityCap,
+                            useVis ? options.Visibility : null, useVis ? candClusters[k] : 0,
                             out float i_r, out float i_g, out float i_b, out float sc);
                         scores[k] = sc; ir[k] = i_r; ig[k] = i_g; ib[k] = i_b;
                     });
@@ -212,8 +244,9 @@ namespace BspLightReSlopper.Estimation
                 {
                     for (int k = 0; k < K; k++)
                     {
-                        FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, n, fade2,
+                        FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
                             supportR2, options.MaxIntensityCap,
+                            useVis ? options.Visibility : null, useVis ? candClusters[k] : 0,
                             out float i_r, out float i_g, out float i_b, out float sc);
                         scores[k] = sc; ir[k] = i_r; ig[k] = i_g; ib[k] = i_b;
                     }
@@ -244,8 +277,15 @@ namespace BspLightReSlopper.Estimation
                         for (int sign = -1; sign <= 1; sign += 2)
                         {
                             Vector3 trial = bestL + AxisStep(axis, sign * step);
-                            FitSingleLight(trial, px, py, pz, nx, ny, nz, rR, rG, rB, n, fade2,
+                            int trialCluster = 0;
+                            if (useVis)
+                            {
+                                int leaf = options.Collision!.PointLeaf(trial);
+                                trialCluster = (leaf >= 0 && leaf < options.Collision.LeafCount) ? options.Collision.LeafCluster(leaf) : -1;
+                            }
+                            FitSingleLight(trial, px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
                                 supportR2, options.MaxIntensityCap,
+                                useVis ? options.Visibility : null, trialCluster,
                                 out float i_r, out float i_g, out float i_b, out float sc);
                             if (sc < betterScore)
                             {
@@ -267,11 +307,19 @@ namespace BspLightReSlopper.Estimation
 
                 // ---- 5. Trial subtraction with support test ----
                 float energyBefore = currentEnergy;
+                int bestCluster = 0;
+                if (useVis)
+                {
+                    int leaf = options.Collision!.PointLeaf(bestL);
+                    bestCluster = (leaf >= 0 && leaf < options.Collision.LeafCount) ? options.Collision.LeafCluster(leaf) : -1;
+                }
                 int supportingTexels = ApplyContribution(
-                    bestL, bestI, px, py, pz, nx, ny, nz, rR, rG, rB, n, fade2,
+                    bestL, bestI, px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
                     sign: -1f,
                     countSupporting: true,
-                    supportingFraction: options.SupportingFraction);
+                    supportingFraction: options.SupportingFraction,
+                    vis: useVis ? options.Visibility : null,
+                    candCluster: bestCluster);
                 currentEnergy = SumSq(rR, rG, rB);
 
                 float explained = MathF.Max(0, energyBefore - currentEnergy);
@@ -284,8 +332,9 @@ namespace BspLightReSlopper.Estimation
                 if (reject)
                 {
                     // Roll back the subtraction.
-                    ApplyContribution(bestL, bestI, px, py, pz, nx, ny, nz, rR, rG, rB, n, fade2,
-                        sign: +1f, countSupporting: false, supportingFraction: 0f);
+                    ApplyContribution(bestL, bestI, px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
+                        sign: +1f, countSupporting: false, supportingFraction: 0f,
+                        vis: useVis ? options.Visibility : null, candCluster: bestCluster);
                     currentEnergy = energyBefore;
                     rejected++;
                     consecutiveRejects++;
@@ -448,7 +497,9 @@ namespace BspLightReSlopper.Estimation
             float[] px, float[] py, float[] pz,
             float[] nx, float[] ny, float[] nz,
             float[] rR, float[] rG, float[] rB,
+            int[] clusters,
             int n, float fade2, float supportR2, float cap,
+            BspVis? vis, int candCluster,
             out float iR, out float iG, out float iB, out float score)
         {
             double sgg = 0;
@@ -460,6 +511,9 @@ namespace BspLightReSlopper.Estimation
                 float d2 = dxv * dxv + dyv * dyv + dzv * dzv;
                 if (d2 < 1e-3f) continue;
                 if (d2 > supportR2) continue;
+                // PVS gate: skip samples whose leaf is not potentially-visible from the
+                // candidate's leaf. This is the dominant precision win on multi-room maps.
+                if (vis != null && !vis.CanSee(candCluster, clusters[i])) continue;
                 float invD = 1f / MathF.Sqrt(d2);
                 float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
                 if (ndotL <= 0f) continue;
@@ -475,13 +529,9 @@ namespace BspLightReSlopper.Estimation
                 iR = iG = iB = 0; score = float.PositiveInfinity; return;
             }
             double inv = 1.0 / sgg;
-            // Unconstrained per-channel intensities.
-            double iR_u = sgr_R * inv;
-            double iG_u = sgr_G * inv;
-            double iB_u = sgr_B * inv;
-            iR = ClampToCap((float)iR_u, cap);
-            iG = ClampToCap((float)iG_u, cap);
-            iB = ClampToCap((float)iB_u, cap);
+            iR = ClampToCap((float)(sgr_R * inv), cap);
+            iG = ClampToCap((float)(sgr_G * inv), cap);
+            iB = ClampToCap((float)(sgr_B * inv), cap);
 
             // SSE-drop per channel:
             //   drop = sse_before - sse_after = I·(2·sgr - I·sgg)
@@ -589,14 +639,19 @@ namespace BspLightReSlopper.Estimation
 
         /// <summary>Add or remove a light's predicted contribution to the residual buffer.
         /// When <paramref name="sign"/> is -1 we subtract (forward greedy peel); +1 reverts.
-        /// Returns the count of "supporting" texels (only meaningful when subtracting).</summary>
+        /// Returns the count of "supporting" texels (only meaningful when subtracting).
+        /// Honours the same PVS gate as <see cref="FitSingleLight"/> so subtraction is
+        /// consistent with the fit (we never bleed a fit's energy into samples the candidate
+        /// couldn't have illuminated in the first place).</summary>
         private static int ApplyContribution(
             Vector3 L, Vector3 I,
             float[] px, float[] py, float[] pz,
             float[] nx, float[] ny, float[] nz,
             float[] rR, float[] rG, float[] rB,
+            int[] clusters,
             int n, float fade2,
-            float sign, bool countSupporting, float supportingFraction)
+            float sign, bool countSupporting, float supportingFraction,
+            BspVis? vis, int candCluster)
         {
             int support = 0;
             for (int i = 0; i < n; i++)
@@ -604,6 +659,7 @@ namespace BspLightReSlopper.Estimation
                 float dxv = L.X - px[i], dyv = L.Y - py[i], dzv = L.Z - pz[i];
                 float d2 = dxv * dxv + dyv * dyv + dzv * dzv;
                 if (d2 < 1e-3f) continue;
+                if (vis != null && !vis.CanSee(candCluster, clusters[i])) continue;
                 float invD = 1f / MathF.Sqrt(d2);
                 float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
                 if (ndotL <= 0f) continue;

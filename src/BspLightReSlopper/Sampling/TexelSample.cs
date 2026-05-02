@@ -22,6 +22,12 @@ namespace BspLightReSlopper.Sampling
         public int AtlasY { get; init; }
         public byte LightmapStyle { get; init; }        // 0 = normal, 0xFF = LS_NONE, etc.
 
+        /// <summary>Cluster id of the BSP leaf containing <see cref="World"/>. Populated by
+        /// <c>TexelSampler.Sample</c> when a <c>BspCollision</c> is supplied; used by the
+        /// visibility-aware estimator to gate "can this candidate light see this texel?"
+        /// via <c>BspVis.CanSee</c>. A value of <c>-2</c> means "not computed".</summary>
+        public int Cluster { get; init; } = -2;
+
         public float Brightness => 0.2126f * Observed.X + 0.7152f * Observed.Y + 0.0722f * Observed.Z;
     }
 }

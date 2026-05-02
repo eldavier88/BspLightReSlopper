@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using BspLightReSlopper.Bsp;
+using BspLightReSlopper.Collision;
 using BspLightReSlopper.EntityIo;
 using BspLightReSlopper.Estimation;
 using BspLightReSlopper.Lightmaps;
@@ -90,16 +91,21 @@ namespace BspLightReSlopper.Cli
 
                 var unpacked = SurfaceUnpacker.Unpack(bsp);
                 var atlas = LightmapAtlas.FromBsp(bsp);
-                var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples });
+                var collision = new BspCollision(bsp);
+                var vis = new BspVis(bsp);
+                var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, collision);
                 Vector3 bboxMin = new(float.PositiveInfinity), bboxMax = new(float.NegativeInfinity);
                 foreach (var s in samples.Samples) { bboxMin = Vector3.Min(bboxMin, s.World); bboxMax = Vector3.Max(bboxMax, s.World); }
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
 
+                bool noVis = args.Flag("no-vis");
                 var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
                 {
                     MaxPivotsPerRound = maxPivots,
                     MaxLights = maxLights,
                     RandomSeed = seed,
+                    Collision = noVis ? null : collision,
+                    Visibility = noVis ? null : vis,
                 });
 
                 var truthOrigins = gt.Lights.Select(x => x.Origin).ToList();
