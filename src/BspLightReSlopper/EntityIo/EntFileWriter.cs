@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -119,8 +120,14 @@ namespace BspLightReSlopper.EntityIo
                 sw.WriteLine("{");
                 sw.WriteLine($"\"classname\" \"{l.ClassName}\"");
                 sw.WriteLine($"\"origin\" \"{F(l.Origin.X)} {F(l.Origin.Y)} {F(l.Origin.Z)}\"");
-                sw.WriteLine($"\"_color\" \"{F(l.Color.X)} {F(l.Color.Y)} {F(l.Color.Z)}\"");
-                sw.WriteLine($"\"light\" \"{l.Intensity.ToString("0.###", inv)}\"");
+                // info_null and other non-light companion entities only carry origin +
+                // targetname; they shouldn't get _color/light/method debug keys.
+                bool isLightLike = string.Equals(l.ClassName, "light", StringComparison.OrdinalIgnoreCase);
+                if (isLightLike)
+                {
+                    sw.WriteLine($"\"_color\" \"{F(l.Color.X)} {F(l.Color.Y)} {F(l.Color.Z)}\"");
+                    sw.WriteLine($"\"light\" \"{l.Intensity.ToString("0.###", inv)}\"");
+                }
                 if (l.SpawnFlags != 0)
                     sw.WriteLine($"\"spawnflags\" \"{l.SpawnFlags.ToString(inv)}\"");
                 if (!string.IsNullOrEmpty(l.Target))
@@ -128,11 +135,14 @@ namespace BspLightReSlopper.EntityIo
                 if (!string.IsNullOrEmpty(l.TargetName))
                     sw.WriteLine($"\"targetname\" \"{l.TargetName}\"");
 
-                sw.WriteLine($"\"_method\" \"{l.Method}\"");
-                sw.WriteLine($"\"_confidence\" \"{l.Confidence.ToString("0.###", inv)}\"");
-                sw.WriteLine($"\"_supportingTexels\" \"{l.SupportingTexels.ToString(inv)}\"");
-                sw.WriteLine($"\"_residualEnergyExplainedFraction\" \"{l.ResidualEnergyExplainedFraction.ToString("0.###", inv)}\"");
-                if (l.BlownOut) sw.WriteLine("\"_blownOut\" \"1\"");
+                if (isLightLike)
+                {
+                    sw.WriteLine($"\"_method\" \"{l.Method}\"");
+                    sw.WriteLine($"\"_confidence\" \"{l.Confidence.ToString("0.###", inv)}\"");
+                    sw.WriteLine($"\"_supportingTexels\" \"{l.SupportingTexels.ToString(inv)}\"");
+                    sw.WriteLine($"\"_residualEnergyExplainedFraction\" \"{l.ResidualEnergyExplainedFraction.ToString("0.###", inv)}\"");
+                    if (l.BlownOut) sw.WriteLine("\"_blownOut\" \"1\"");
+                }
 
                 if (l.ExtraDebugKeys != null)
                 {

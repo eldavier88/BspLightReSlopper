@@ -152,10 +152,16 @@ namespace BspLightReSlopper.Cli
                 if (medianInternal > 1e-3f) scaleToQ3 = 300f / medianInternal;
             }
             log.Info($"intensity calibration: median internal={medianInternal:F1}, scale=*{scaleToQ3:F4} → median q3 light~300");
+            // Classify each light's type (point/spot/linear). For spots we emit a
+            // companion info_null target entity; the type-classifier is skipped for
+            // blowout-seeded lights (already correct as point/spot from blow-out shape).
+            bool noClassify = args.Flag("no-classify");
             var guesses = new List<EntFileWriter.GuessedLight>();
+            int spotIdx = 0;
+            int pointCount = 0, spotCount = 0, linearCount = 0;
             foreach (var l in result.Lights)
             {
-                guesses.Add(new EntFileWriter.GuessedLight
+                var g = new EntFileWriter.GuessedLight
                 {
                     Origin = l.Origin,
                     Color = l.Color,
@@ -164,8 +170,63 @@ namespace BspLightReSlopper.Cli
                     Confidence = l.Confidence,
                     SupportingTexels = l.SupportingTexels,
                     ResidualEnergyExplainedFraction = l.ResidualEnergyExplainedFraction,
-                });
+                };
+                // Classify ALL lights, including blowout seeds. Blowout-seeded lights
+                // overwhelmingly classify as Point (their shape doesn't distinguish from a
+                // round-bright cluster), but we still want the classifier to run so the
+                // type counts in the .ent header are accurate.
+                if (!noClassify)
+                {
+                    var cls = BspLightReSlopper.Estimation.LightTypeClassifier.Classify(l, samples.Samples, halfLambert);
+                    switch (cls.Type)
+                    {
+                        case BspLightReSlopper.Estimation.LightTypeClassifier.Kind.Linear:
+                            g = new EntFileWriter.GuessedLight
+                            {
+                                Origin = g.Origin, Color = g.Color, Intensity = g.Intensity,
+                                Method = g.Method + "+linear",
+                                Confidence = g.Confidence, SupportingTexels = g.SupportingTexels,
+                                ResidualEnergyExplainedFraction = g.ResidualEnergyExplainedFraction,
+                                SpawnFlags = 1,
+                            };
+                            linearCount++;
+                            break;
+                        case BspLightReSlopper.Estimation.LightTypeClassifier.Kind.Spot:
+                            string targetName = "bsplrs_spot_" + spotIdx; spotIdx++;
+                            Vector3 targetPos = l.Origin + cls.SpotDirection * 256f;
+                            g = new EntFileWriter.GuessedLight
+                            {
+                                Origin = g.Origin, Color = g.Color, Intensity = g.Intensity,
+                                Method = g.Method + "+spot",
+                                Confidence = g.Confidence, SupportingTexels = g.SupportingTexels,
+                                ResidualEnergyExplainedFraction = g.ResidualEnergyExplainedFraction,
+                                Target = targetName,
+                                ExtraDebugKeys = new Dictionary<string, string>
+                                {
+                                    ["_spotConeHalfAngleDeg"] = cls.SpotHalfAngleDegrees.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture),
+                                },
+                            };
+                            spotCount++;
+                            // Companion info_null target -- emitted as a synthetic light
+                            // entry with a special classname so EntFileWriter can format it.
+                            guesses.Add(g);
+                            guesses.Add(new EntFileWriter.GuessedLight
+                            {
+                                Origin = targetPos,
+                                Color = Vector3.One, Intensity = 0,
+                                ClassName = "info_null",
+                                TargetName = targetName,
+                                Method = "spot-target",
+                            });
+                            continue;
+                        default:
+                            pointCount++;
+                            break;
+                    }
+                }
+                guesses.Add(g);
             }
+            log.Info($"types: point={pointCount}, linear={linearCount}, spot={spotCount}");
             // ----- Sun detection (E5) -----
             var worldspawnKeys = new Dictionary<string, string>();
             if (!args.Flag("no-sun"))
@@ -207,7 +268,7 @@ namespace BspLightReSlopper.Cli
                 SourceBspName = resolved.DisplayName,
                 InferredCompile = infer.Display,
                 RuntimeSeconds = result.ElapsedSeconds.ToString("0.0") + "s",
-                CountsByType = new Dictionary<string, int> { ["point"] = guesses.Count },
+                CountsByType = new Dictionary<string, int> { ["point"] = pointCount, ["linear"] = linearCount, ["spot"] = spotCount },
                 WorldspawnKeys = worldspawnKeys.Count > 0 ? worldspawnKeys : null,
             });
             log.Info($"wrote {outPath} ({guesses.Count} lights{(worldspawnKeys.Count > 0 ? ", + sun worldspawn keys" : "")})");
