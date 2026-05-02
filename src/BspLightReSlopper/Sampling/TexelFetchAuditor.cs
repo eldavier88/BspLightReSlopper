@@ -94,10 +94,6 @@ namespace BspLightReSlopper.Sampling
 
             var seenPerSurface = new Dictionary<int, HashSet<(int atlas, int x, int y)>>();
 
-            // #region agent log (b852b4) - hypotheses H-A/H-B/H-C/H-D/H-E
-            var dbgSurfacesLogged = new HashSet<int>();
-            // #endregion
-
             int audited = 0;
             for (int si = 0; si < samples.Count && audited < options.MaxAudited; si++)
             {
@@ -182,12 +178,6 @@ namespace BspLightReSlopper.Sampling
                         && surf.NumVerts > 0
                         && IsLmVecsSelfConsistent(bsp, surf, atlas.W, atlas.H))
                     {
-                        // #region agent log (b852b4) - one-shot per-surface diagnostics
-                        if (dbgSurfacesLogged.Add(s.SurfaceIndex))
-                        {
-                            DebugLog.WritePerVertexConsistency("b852b4", "TexelFetchAuditor.cs:H-A", s.SurfaceIndex, bsp, surf, atlas.W, atlas.H);
-                        }
-                        // #endregion
                         // Forward-map assumes surface-texel coords: texel (0,0) centre is
                         // the first atlas-pixel centre owned by the surface, i.e. atlas
                         // (LmX0, LmY0). So surface-texel coord for atlas (ax, ay) is
@@ -201,16 +191,6 @@ namespace BspLightReSlopper.Sampling
                         float tol = MathF.Max(options.PlanarWorldToleranceFloor,
                                    MathF.Min(options.PlanarWorldToleranceCeiling, 2f * texelWorldSize));
                         if (worldErr > maxPlanarWErr) maxPlanarWErr = worldErr;
-                        // #region agent log (b852b4) - first-sample world vs forward + tolerance (H-B, H-C)
-                        if (planarFails == 0 && firstFails.Count == 0)
-                        {
-                            DebugLog.WriteFirstPlanarSample("b852b4", "TexelFetchAuditor.cs:H-B-H-C",
-                                s.SurfaceIndex, s.AtlasX, s.AtlasY, s.World, worldForward,
-                                surf.LightmapOrigin, surf.LightmapVec0, surf.LightmapVec1,
-                                surf.LmX0, surf.LmY0, surf.LightmapWidth, surf.LightmapHeight,
-                                worldErr, tol, texelWorldSize);
-                        }
-                        // #endregion
                         if (worldErr > tol)
                         {
                             planarFails++;
@@ -260,121 +240,30 @@ namespace BspLightReSlopper.Sampling
         }
 
         /// <summary>Test whether a surface's <c>LightmapOrigin/Vec0/Vec1</c> are consistent
-        /// with its per-vertex <c>Lm0</c> atlas-relative UVs. We pick the first vertex,
-        /// derive its expected surface-texel coords from its <c>Lm0</c> and atlas size,
-        /// forward-map through lmVecs, and compare to the vertex's actual world position.
-        /// Disagreement &gt; 4u means the lmVecs aren't a faithful affine representation
-        /// of the surface's lightmap layout (common in synthetic / hand-rolled BSPs) and
-        /// the auditor skips the planar forward check for that surface.</summary>
+        /// with its per-vertex <c>Lm0</c> atlas-relative UVs. We forward-map every vertex's
+        /// derived surface-texel coords through the lmVecs and require the WORST mismatch
+        /// against the vertex world position to be ≤ 4u. Checking only vertex 0 is
+        /// insufficient because q3map2 (and many synthetic BSPs) place vertex 0 at
+        /// <c>LightmapOrigin</c> exactly — vertex 0's error is then trivially zero
+        /// regardless of how wrong the lmVec MAGNITUDES are. Sampling the worst vertex
+        /// catches scale/rotation mismatches the origin coincidence would otherwise hide.</summary>
         private static bool IsLmVecsSelfConsistent(BspFile bsp, BspDrawSurface surf, int atlasW, int atlasH)
         {
             if (surf.NumVerts == 0) return false;
-            var v = bsp.DrawVerts[surf.FirstVert];
-            // Atlas-space UV of vertex 0.
-            float lmU = v.Lm0.X * atlasW;
-            float lmV = v.Lm0.Y * atlasH;
-            // Surface-texel coords (LmX0/LmY0 is the atlas-space start of the surface's
-            // lightmap region; many IBSP46 BSPs leave these at 0, in which case the
-            // surface-texel coord equals the atlas coord).
-            float texU = lmU - surf.LmX0;
-            float texV = lmV - surf.LmY0;
-            Vector3 worldForward = surf.LightmapOrigin + texU * surf.LightmapVec0 + texV * surf.LightmapVec1;
-            float err = (worldForward - v.Xyz).Length();
-            return err <= 4f;
+            float maxErr = 0f;
+            for (int vi = 0; vi < surf.NumVerts; vi++)
+            {
+                var v = bsp.DrawVerts[surf.FirstVert + vi];
+                float lmU = v.Lm0.X * atlasW;
+                float lmV = v.Lm0.Y * atlasH;
+                float texU = lmU - surf.LmX0;
+                float texV = lmV - surf.LmY0;
+                Vector3 worldForward = surf.LightmapOrigin + texU * surf.LightmapVec0 + texV * surf.LightmapVec1;
+                float err = (worldForward - v.Xyz).Length();
+                if (err > maxErr) maxErr = err;
+            }
+            return maxErr <= 4f;
         }
-
-        // #region agent log (b852b4) - debug-mode NDJSON sink
-        internal static class DebugLog
-        {
-            private static readonly string LogPath = ResolveLogPath();
-            private static readonly object Lock = new object();
-
-            private static string ResolveLogPath()
-            {
-                // Walk upward from CWD looking for a folder with the BspLightReSlopper repo
-                // markers; write debug-b852b4.log there. Falls back to CWD.
-                string cur = System.IO.Directory.GetCurrentDirectory();
-                for (int i = 0; i < 6 && !string.IsNullOrEmpty(cur); i++)
-                {
-                    if (System.IO.File.Exists(System.IO.Path.Combine(cur, "BspLightReSlopper.sln")))
-                        return System.IO.Path.Combine(cur, "debug-b852b4.log");
-                    cur = System.IO.Path.GetDirectoryName(cur) ?? "";
-                }
-                return System.IO.Path.Combine(System.IO.Directory.GetCurrentDirectory(), "debug-b852b4.log");
-            }
-
-            private static void Append(string json)
-            {
-                try
-                {
-                    lock (Lock) System.IO.File.AppendAllText(LogPath, json + "\n", System.Text.Encoding.UTF8);
-                }
-                catch { /* swallow: instrumentation must never break the test */ }
-            }
-
-            internal static void WritePerVertexConsistency(string sessionId, string location, int surfaceIndex,
-                BspFile bsp, BspDrawSurface surf, int atlasW, int atlasH)
-            {
-                long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                int n = surf.NumVerts;
-                float maxErr = 0f, minErr = float.PositiveInfinity, errAtV0 = -1f;
-                int worstVtx = -1;
-                for (int vi = 0; vi < n; vi++)
-                {
-                    var v = bsp.DrawVerts[surf.FirstVert + vi];
-                    float lmU = v.Lm0.X * atlasW;
-                    float lmV = v.Lm0.Y * atlasH;
-                    float texU = lmU - surf.LmX0;
-                    float texV = lmV - surf.LmY0;
-                    Vector3 worldForward = surf.LightmapOrigin + texU * surf.LightmapVec0 + texV * surf.LightmapVec1;
-                    float err = (worldForward - v.Xyz).Length();
-                    if (vi == 0) errAtV0 = err;
-                    if (err > maxErr) { maxErr = err; worstVtx = vi; }
-                    if (err < minErr) minErr = err;
-                }
-                string json = "{\"sessionId\":\"" + sessionId + "\",\"hypothesisId\":\"H-A\",\"location\":\"" + location +
-                              "\",\"timestamp\":" + ts +
-                              ",\"message\":\"per-vertex IsLmVecsSelfConsistent error\",\"data\":{" +
-                              "\"surfaceIndex\":" + surfaceIndex +
-                              ",\"numVerts\":" + n +
-                              ",\"errAtV0\":" + F(errAtV0) +
-                              ",\"maxErr\":" + F(maxErr) +
-                              ",\"worstVertex\":" + worstVtx +
-                              ",\"minErr\":" + F(minErr) +
-                              ",\"checkOnlyV0Returns\":\"" + (errAtV0 <= 4f ? "consistent" : "inconsistent") + "\"" +
-                              ",\"checkAllVertsWouldReturn\":\"" + (maxErr <= 4f ? "consistent" : "inconsistent") + "\"" +
-                              "}}";
-                Append(json);
-            }
-
-            internal static void WriteFirstPlanarSample(string sessionId, string location,
-                int surfaceIndex, int ax, int ay, Vector3 world, Vector3 worldForward,
-                Vector3 origin, Vector3 lmVec0, Vector3 lmVec1, int lmX0, int lmY0, int lmW, int lmH,
-                float worldErr, float tol, float texelWorldSize)
-            {
-                long ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                string json = "{\"sessionId\":\"" + sessionId + "\",\"hypothesisId\":\"H-B,H-C,H-D\",\"location\":\"" + location +
-                              "\",\"timestamp\":" + ts +
-                              ",\"message\":\"first planar-check sample world vs forward\",\"data\":{" +
-                              "\"surfaceIndex\":" + surfaceIndex +
-                              ",\"atlasX\":" + ax + ",\"atlasY\":" + ay +
-                              ",\"sampleWorld\":[" + F(world.X) + "," + F(world.Y) + "," + F(world.Z) + "]" +
-                              ",\"forwardWorld\":[" + F(worldForward.X) + "," + F(worldForward.Y) + "," + F(worldForward.Z) + "]" +
-                              ",\"lightmapOrigin\":[" + F(origin.X) + "," + F(origin.Y) + "," + F(origin.Z) + "]" +
-                              ",\"lightmapVec0\":[" + F(lmVec0.X) + "," + F(lmVec0.Y) + "," + F(lmVec0.Z) + "]" +
-                              ",\"lightmapVec1\":[" + F(lmVec1.X) + "," + F(lmVec1.Y) + "," + F(lmVec1.Z) + "]" +
-                              ",\"lmX0\":" + lmX0 + ",\"lmY0\":" + lmY0 + ",\"lmW\":" + lmW + ",\"lmH\":" + lmH +
-                              ",\"lmVec0Length\":" + F(lmVec0.Length()) +
-                              ",\"texelWorldSize\":" + F(texelWorldSize) +
-                              ",\"tolerance\":" + F(tol) +
-                              ",\"worldErr\":" + F(worldErr) +
-                              "}}";
-                Append(json);
-            }
-
-            private static string F(float v) => v.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture);
-        }
-        // #endregion
 
         /// <summary>Compute the barycentric coordinates of point <paramref name="p"/>
         /// in triangle <c>(p0,p1,p2)</c>. We project <paramref name="p"/> onto the

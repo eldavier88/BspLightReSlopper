@@ -31,7 +31,7 @@ namespace BspLightReSlopper.Tests
             "\"origin\" \"0 0 0\"\n" +
             "}\n";
 
-        [Fact]
+        [SkippableFact]
         public void RemovesExistingLightsAndPlacesNewOnes()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
@@ -74,7 +74,7 @@ namespace BspLightReSlopper.Tests
             Assert.NotNull(map.Entities.FirstOrDefault(e => e.ClassName == "info_player_start"));
         }
 
-        [Fact]
+        [SkippableFact]
         public void RoundTripsThroughWriter()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
@@ -92,7 +92,7 @@ namespace BspLightReSlopper.Tests
             Assert.True(rtLights >= 4, $"round-trip preserved only {rtLights} lights");
         }
 
-        [Fact]
+        [SkippableFact]
         public void StampsExplicitLightmapScale()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
@@ -113,7 +113,7 @@ namespace BspLightReSlopper.Tests
             Assert.Equal("2", ws.GetKey("_lightmapscale"));
         }
 
-        [Fact]
+        [SkippableFact]
         public void RandomisesLightmapScaleAcrossSeedsAndOnlyDrawsFromAllowedBuckets()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
@@ -139,7 +139,7 @@ namespace BspLightReSlopper.Tests
             Assert.True(seen.Count >= 2, $"only saw scales {string.Join(',', seen)} across 24 seeds");
         }
 
-        [Fact]
+        [SkippableFact]
         public void LightmapScaleNanByDefault()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
@@ -155,7 +155,7 @@ namespace BspLightReSlopper.Tests
             Assert.Null(ws.GetKey("_lightmapscale"));
         }
 
-        [Fact]
+        [SkippableFact]
         public void DeterministicForSameSeed()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");

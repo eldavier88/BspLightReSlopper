@@ -122,7 +122,7 @@ namespace BspLightReSlopper.Tests
             "{\n\"classname\" \"info_player_start\"\n\"origin\" \"0 0 32\"\n}\n" +
             "{\n\"classname\" \"light\"\n\"origin\" \"0 0 256\"\n\"light\" \"500\"\n\"_color\" \"1 1 1\"\n}\n";
 
-        [Fact]
+        [SkippableFact]
         public void CompilesSyntheticRoomEndToEnd()
         {
             Skip.IfNot(File.Exists(Q3Map2Exe), "q3map2.exe not present in resources folder");

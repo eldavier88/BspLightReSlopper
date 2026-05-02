@@ -19,7 +19,7 @@ namespace BspLightReSlopper.Tests
             return File.Exists(p) ? p : null;
         }
 
-        [Fact]
+        [SkippableFact]
         public void GroundTruthLightOriginsAreNotInsideSolid()
         {
             string? path = RealMap();
@@ -45,7 +45,7 @@ namespace BspLightReSlopper.Tests
                 $"{insideSolid}/{total} marked inside-solid, {outsideMap}/{total} marked outside-map (bad fraction {badFraction:P1})");
         }
 
-        [Fact]
+        [SkippableFact]
         public void FarAwayPointIsOutsideMap()
         {
             string? path = RealMap();
@@ -57,7 +57,7 @@ namespace BspLightReSlopper.Tests
             Assert.True(col.IsOutsideMap(far), "10k beyond map maxs should report as outside-map");
         }
 
-        [Fact]
+        [SkippableFact]
         public void HorizontalRayFromLightHitsAWall()
         {
             string? path = RealMap();
@@ -73,7 +73,7 @@ namespace BspLightReSlopper.Tests
             Assert.True(tr.Fraction < 1f, $"expected horizontal ray from light {light.Origin} to hit wall, fraction={tr.Fraction}");
         }
 
-        [Fact]
+        [SkippableFact]
         public void LineOfSightBetweenTwoNearbyLightsBehavesSensibly()
         {
             string? path = RealMap();
