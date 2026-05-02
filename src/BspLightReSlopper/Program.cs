@@ -17,6 +17,7 @@ namespace BspLightReSlopper
                     "inspect-bsp"          => InspectBspCommand.Run(parsed),
                     "scatter"              => ScatterCommand.Run(parsed),
                     "train"                => TrainCommand.Run(parsed),
+                    "dump-samples"         => DumpSamplesCommand.Run(parsed),
                     "build-synthetic-map"  => BuildSyntheticMapCommand.Run(parsed),
                     "help"                 => PrintHelp(),
                     "--help"               => PrintHelp(),
@@ -66,6 +67,10 @@ namespace BspLightReSlopper
             Console.WriteLine("              --q3map2 <q3map2.exe> --out <dir>");
             Console.WriteLine("              [--rounds N] [--seed N] [--lights N]");
             Console.WriteLine("              [--match-tolerance U] [--timeout SECS] [--game jk2|ja|quake3]");
+            Console.WriteLine();
+            Console.WriteLine("  dump-samples --bsp <path> --out <samples.csv>");
+            Console.WriteLine("               [--assets <dir>] [--max-samples N]");
+            Console.WriteLine("               Diagnostic: dump every TexelSample to CSV.");
             Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine();

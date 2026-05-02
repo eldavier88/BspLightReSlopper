@@ -26,6 +26,111 @@ namespace BspLightReSlopper.Tests
             return BuildMinimal(fmt, out counts, multiStage: true);
         }
 
+        /// <summary>
+        /// Build an IBSP46 BSP with a single 256u-square quad on z=0, occupying the
+        /// atlas region (lmX=0, lmY=0, lmW=lmH) of a single 128x128 atlas. The
+        /// lightmap is filled with the per-pixel pattern given by
+        /// <paramref name="atlasPixel"/>(atlasX, atlasY) -> (R, G, B).
+        ///
+        /// Used by E0's texel-fetch validation: with a known XY-gradient pattern,
+        /// the test asserts every emitted sample's <c>Observed</c> matches the
+        /// pattern evaluated at its <c>(AtlasX, AtlasY)</c> coords AND that the
+        /// barycentric-interpolated <c>World</c> position matches the
+        /// (Lm0 -&gt; world) inversion exactly. The 256u quad spans world
+        /// (-128..+128, -128..+128, 0); the lightmap region spans atlas pixels
+        /// (0..lmSize-1, 0..lmSize-1), so a sample at atlas (ax, ay) corresponds
+        /// to world ((ax + 0.5)/lmSize * 256 - 128, (ay + 0.5)/lmSize * 256 - 128, 0).
+        /// </summary>
+        public static byte[] BuildIbsp46QuadWithGradientLightmap(int lmSize, Func<int, int, (byte r, byte g, byte b)> atlasPixel)
+        {
+            if (lmSize < 4 || lmSize > 128) throw new ArgumentOutOfRangeException(nameof(lmSize));
+            var fmt = new Ibsp46Format();
+            var lumps = new Dictionary<string, byte[]>(StringComparer.Ordinal);
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.Entities] = Encoding.ASCII.GetBytes("{ \"classname\" \"worldspawn\" }\n\0");
+
+            // Q3-family shader stride = 64 (name) + 4 (surfaceFlags) + 4 (contentFlags) = 72
+            var sh = new byte[72];
+            CopyAscii(sh, 0, "textures/test/quad", 64);
+            BinaryPrimitives.WriteInt32LittleEndian(sh.AsSpan(64, 4), 0);
+            BinaryPrimitives.WriteInt32LittleEndian(sh.AsSpan(68, 4), 1);
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.Shaders] = sh;
+
+            // Q3-family model stride = 12 (mins) + 12 (maxs) + 16 (firstSurface, numSurfaces, firstBrush, numBrushes) = 40
+            var model = new byte[40];
+            WriteVec3(model, 0, new Vector3(-128, -128, 0));
+            WriteVec3(model, 12, new Vector3(128, 128, 0));
+            BinaryPrimitives.WriteInt32LittleEndian(model.AsSpan(24, 4), 0);
+            BinaryPrimitives.WriteInt32LittleEndian(model.AsSpan(28, 4), 1);
+            BinaryPrimitives.WriteInt32LittleEndian(model.AsSpan(32, 4), 0);
+            BinaryPrimitives.WriteInt32LittleEndian(model.AsSpan(36, 4), 0);
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.Models] = model;
+
+            // 4 verts (a quad). Lm0 maps to [0..lmFrac] x [0..lmFrac] of a 128 atlas.
+            float lmFrac = lmSize / 128f;
+            var verts = new byte[fmt.VertexStride * 4];
+            var quad = new (Vector3 p, Vector2 lm)[]
+            {
+                (new Vector3(-128, -128, 0), new Vector2(0f,    0f)),
+                (new Vector3(+128, -128, 0), new Vector2(lmFrac, 0f)),
+                (new Vector3(-128, +128, 0), new Vector2(0f,    lmFrac)),
+                (new Vector3(+128, +128, 0), new Vector2(lmFrac, lmFrac)),
+            };
+            for (int i = 0; i < 4; i++)
+            {
+                int o = i * fmt.VertexStride;
+                WriteVec3(verts, o, quad[i].p);
+                WriteVec2(verts, o + 12, new Vector2(quad[i].p.X / 128f, quad[i].p.Y / 128f));
+                WriteVec2(verts, o + 20, quad[i].lm);
+                WriteVec3(verts, o + 28, new Vector3(0, 0, 1));
+                verts[o + 40] = 200; verts[o + 41] = 200; verts[o + 42] = 200; verts[o + 43] = 255;
+            }
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.DrawVerts] = verts;
+
+            // 6 draw indexes: two triangles {0,1,2} and {1,3,2}
+            var idx = new byte[24];
+            int[] indices = { 0, 1, 2, 1, 3, 2 };
+            for (int i = 0; i < 6; i++) BinaryPrimitives.WriteInt32LittleEndian(idx.AsSpan(i * 4, 4), indices[i]);
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.DrawIndexes] = idx;
+
+            var surf = new byte[fmt.SurfaceStride];
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(0, 4), 0);   // shaderNum
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(4, 4), -1);  // fogNum
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(8, 4), 1);   // surfaceType MST_PLANAR
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(12, 4), 0);  // firstVert
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(16, 4), 4);  // numVerts
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(20, 4), 0);  // firstIndex
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(24, 4), 6);  // numIndexes
+            int p = 28;
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;        // lightmapNum
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;        // lightmapX
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;        // lightmapY
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), lmSize); p += 4;   // lightmapWidth
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), lmSize); p += 4;   // lightmapHeight
+            WriteVec3(surf, p, new Vector3(-128, -128, 0)); p += 12;
+            WriteVec3(surf, p, new Vector3(2, 0, 0)); p += 12;
+            WriteVec3(surf, p, new Vector3(0, 2, 0)); p += 12;
+            WriteVec3(surf, p, new Vector3(0, 0, 1)); p += 12;
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;
+            BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.Surfaces] = surf;
+
+            // Lightmap atlas: 128x128 RGB. Fill the (0..lmSize-1, 0..lmSize-1) region
+            // with the user-supplied pattern; everything else stays zero.
+            var lm = new byte[128 * 128 * 3];
+            for (int ay = 0; ay < lmSize; ay++)
+            {
+                for (int ax = 0; ax < lmSize; ax++)
+                {
+                    var (r, g, b) = atlasPixel(ax, ay);
+                    int oo = (ay * 128 + ax) * 3;
+                    lm[oo + 0] = r; lm[oo + 1] = g; lm[oo + 2] = b;
+                }
+            }
+            lumps[BspLightReSlopper.Bsp.BspLumpKind.Lightmaps] = lm;
+
+            return Assemble(fmt, lumps);
+        }
+
         private static byte[] BuildMinimal(IBspFormat fmt, out (int verts, int surfs) counts, bool multiStage)
         {
             // We populate enough lumps that the loader can parse them all without errors:
