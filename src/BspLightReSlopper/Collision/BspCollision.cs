@@ -86,15 +86,14 @@ namespace BspLightReSlopper.Collision
             return contents;
         }
 
-        /// <summary>True if the point is inside any solid/clip/donotenter brush, OR if the
-        /// containing leaf has the q3 "solid" sentinel <c>cluster &lt; 0</c>. Both checks
-        /// matter: the contents-flag check catches well-tagged shaders, the cluster check
-        /// catches leaves the compiler marked as solid space regardless of explicit flags.</summary>
+        /// <summary>True if the point is inside any solid/clip/donotenter brush. We do NOT
+        /// also look at the leaf's cluster sentinel: <c>cluster &lt; 0</c> is set both for
+        /// real solid leaves AND for every leaf in a BSP that hasn't been through <c>-vis</c>
+        /// yet, so it can't be used to distinguish the two cases. The brush-contents check is
+        /// the reliable signal; it correctly handles JK2 maps (which were vis'd) and our
+        /// synthetic <c>-bsp</c>-only test maps alike.</summary>
         public bool IsInsideSolid(Vector3 p)
         {
-            int leafIdx = PointLeaf(p);
-            if (leafIdx >= 0 && leafIdx < _bsp.Leafs.Count && _bsp.Leafs[leafIdx].Cluster < 0)
-                return true;
             return (PointContents(p) & LightRejectMask) != 0;
         }
 

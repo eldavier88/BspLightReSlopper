@@ -16,6 +16,7 @@ namespace BspLightReSlopper
                     "verify"               => VerifyCommand.Run(parsed),
                     "inspect-bsp"          => InspectBspCommand.Run(parsed),
                     "scatter"              => ScatterCommand.Run(parsed),
+                    "train"                => TrainCommand.Run(parsed),
                     "build-synthetic-map"  => BuildSyntheticMapCommand.Run(parsed),
                     "help"                 => PrintHelp(),
                     "--help"               => PrintHelp(),
@@ -60,6 +61,11 @@ namespace BspLightReSlopper
             Console.WriteLine("              [--count N] [--seed N] [--clearance U]");
             Console.WriteLine("              [--min-intensity I] [--max-intensity I]");
             Console.WriteLine("              [--colored-fraction F] [--linear-fraction F] [--spot-fraction F]");
+            Console.WriteLine();
+            Console.WriteLine("  train       --source-map <src.map> --base-path <fs_basepath>");
+            Console.WriteLine("              --q3map2 <q3map2.exe> --out <dir>");
+            Console.WriteLine("              [--rounds N] [--seed N] [--lights N]");
+            Console.WriteLine("              [--match-tolerance U] [--timeout SECS] [--game jk2|ja|quake3]");
             Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine();

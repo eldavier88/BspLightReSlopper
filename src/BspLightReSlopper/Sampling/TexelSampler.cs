@@ -86,16 +86,13 @@ namespace BspLightReSlopper.Sampling
                 {
                     int lmIdx = s.LightmapIndex(st);
                     if (lmIdx < 0) continue;
-                    var (lmX, lmY) = s.LightmapXY(st);
-                    int W = s.LightmapWidth;
-                    int H = s.LightmapHeight;
-                    if (W <= 0 || H <= 0) continue;
                     stages++;
 
-                    // Compute the union lmUV bbox of all triangles for this stage. q3map2
-                    // half-texel-insets vertex lmUVs so the raw rect [lmX..lmX+W) is wider
-                    // than what the triangulation actually covers. Walking only the triangulation
-                    // bbox avoids 30-50% spurious "outside-triangle" misses on real maps.
+                    // Compute the union lmUV bbox of all triangles for this stage. Vertex Lm
+                    // UVs are atlas-relative ([0,1]) for both IBSP46 and RBSP1, so we walk
+                    // atlas pixels directly. We deliberately ignore the per-surface
+                    // (lmX, lmY, W, H) fields: they're zero on q3map2-built IBSP46 outputs
+                    // for many surfaces, and they're redundant with the vertex Lm bbox.
                     float uMin = float.PositiveInfinity, uMax = float.NegativeInfinity;
                     float vMin = float.PositiveInfinity, vMax = float.NegativeInfinity;
                     for (int i = 0; i < tris.Count; i++)
@@ -110,22 +107,23 @@ namespace BspLightReSlopper.Sampling
                         }
                     }
                     if (!(uMax > uMin && vMax > vMin)) continue;
-                    int txMin = Math.Max(0, (int)MathF.Floor(uMin * atlas.W) - lmX);
-                    int tyMin = Math.Max(0, (int)MathF.Floor(vMin * atlas.H) - lmY);
-                    int txMax = Math.Min(W - 1, (int)MathF.Ceiling(uMax * atlas.W) - lmX);
-                    int tyMax = Math.Min(H - 1, (int)MathF.Ceiling(vMax * atlas.H) - lmY);
 
-                    for (int ty = tyMin; ty <= tyMax; ty++)
+                    int axMin = Math.Max(0, (int)MathF.Floor(uMin * atlas.W));
+                    int ayMin = Math.Max(0, (int)MathF.Floor(vMin * atlas.H));
+                    int axMax = Math.Min(atlas.W - 1, (int)MathF.Ceiling(uMax * atlas.W));
+                    int ayMax = Math.Min(atlas.H - 1, (int)MathF.Ceiling(vMax * atlas.H));
+
+                    for (int ay = ayMin; ay <= ayMax; ay++)
                     {
-                        for (int tx = txMin; tx <= txMax; tx++)
+                        for (int ax = axMin; ax <= axMax; ax++)
                         {
                             counter++;
                             if (counter % stride != 0) continue;
 
                             litConsidered++;
                             // atlas-relative UV at texel center
-                            float au = (lmX + tx + 0.5f) / atlas.W;
-                            float av = (lmY + ty + 0.5f) / atlas.H;
+                            float au = (ax + 0.5f) / atlas.W;
+                            float av = (ay + 0.5f) / atlas.H;
 
                             // Find triangle whose stage-st lmUV bbox contains (au, av).
                             int triIdx = FindContaining(tris, st, au, av);
@@ -144,7 +142,7 @@ namespace BspLightReSlopper.Sampling
                             Vector3 world = a * t.P0 + b * t.P1 + c * t.P2;
 
                             // Read lightmap pixel
-                            atlas.TryRead(lmIdx, lmX + tx, lmY + ty, out byte r, out byte g, out byte bg);
+                            atlas.TryRead(lmIdx, ax, ay, out byte r, out byte g, out byte bg);
                             if (r == 0 && g == 0 && bg == 0)
                             {
                                 unlitSkipped++;
@@ -161,8 +159,8 @@ namespace BspLightReSlopper.Sampling
                                 Normal = t.Normal,
                                 Observed = new Vector3(r / 255f, g / 255f, bg / 255f),
                                 AtlasIndex = lmIdx,
-                                AtlasX = lmX + tx,
-                                AtlasY = lmY + ty,
+                                AtlasX = ax,
+                                AtlasY = ay,
                                 LightmapStyle = style,
                             });
                             surfaceContributed = true;

@@ -149,6 +149,10 @@ namespace BspLightReSlopper.Tools
         public CompileResult Compile(string mapPath, CompileSettings settings, TimeSpan? perStageTimeout = null)
         {
             if (!File.Exists(mapPath)) throw new FileNotFoundException(mapPath);
+            // q3map2 resolves the .map path against ITS working directory (we set that to
+            // the q3map2 binary's folder), so any relative input path silently fails to
+            // find the .map. Always pass an absolute path.
+            mapPath = Path.GetFullPath(mapPath);
             string bspPath = Path.ChangeExtension(mapPath, ".bsp");
             var result = new CompileResult { BspPath = bspPath };
 
@@ -158,6 +162,10 @@ namespace BspLightReSlopper.Tools
                 if (settings.MetaSurfaces) args.Add("-meta");
                 if (settings.PatchSubdivisions.HasValue)
                 { args.Add("-subdivisions"); args.Add(F(settings.PatchSubdivisions.Value)); }
+                // -keeplights is a -bsp stage flag (writebsp.cpp uses it to set a
+                // _keepLights worldspawn key that downstream -vis/-light stages then read).
+                // Passing it only to -light is a no-op; the lights are stripped during -bsp.
+                if (settings.KeepLights) args.Add("-keeplights");
                 AppendCommonArgs(args);
                 args.Add(mapPath);
                 result.Stages.Add(RunStage("bsp", args, perStageTimeout));
@@ -206,7 +214,8 @@ namespace BspLightReSlopper.Tools
                 if (settings.Cheap) args.Add("-cheap");
                 if (settings.BounceOnly) args.Add("-bounceonly");
                 if (settings.BounceGrid) args.Add("-bouncegrid");
-                if (settings.KeepLights) args.Add("-keeplights");
+                // KeepLights goes on the -bsp stage (see comment there). It's redundant on
+                // -light but doesn't hurt; we omit to keep the cmdline clean.
                 if (settings.BounceColorRatio.HasValue) { args.Add("-bouncecolorratio"); args.Add(F(settings.BounceColorRatio.Value)); }
                 if (settings.BounceScale.HasValue) { args.Add("-bouncescale"); args.Add(F(settings.BounceScale.Value)); }
                 if (settings.AreaScale.HasValue) { args.Add("-areascale"); args.Add(F(settings.AreaScale.Value)); }
