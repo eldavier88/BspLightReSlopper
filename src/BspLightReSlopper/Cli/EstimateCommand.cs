@@ -166,14 +166,51 @@ namespace BspLightReSlopper.Cli
                     ResidualEnergyExplainedFraction = l.ResidualEnergyExplainedFraction,
                 });
             }
+            // ----- Sun detection (E5) -----
+            var worldspawnKeys = new Dictionary<string, string>();
+            if (!args.Flag("no-sun"))
+            {
+                var sunResult = BspLightReSlopper.Estimation.SunDetector.Detect(samples.Samples, bsp, log: log);
+                if (sunResult.DetectedSun != null)
+                {
+                    var sun = sunResult.DetectedSun;
+                    log.Info($"sun: dir=({sun.Direction.X:F2},{sun.Direction.Y:F2},{sun.Direction.Z:F2}) pitch={sun.Pitch:F1} yaw={sun.Yaw:F1} color=({sun.Color.X:F2},{sun.Color.Y:F2},{sun.Color.Z:F2}) intensity={sun.Intensity:F1} support={sun.SupportingSamples} dominance={sun.DominanceScore:F1}x");
+                    worldspawnKeys["_sun_color"]     = $"{sun.Color.X:0.###} {sun.Color.Y:0.###} {sun.Color.Z:0.###}";
+                    worldspawnKeys["_sun_pitch"]     = sun.Pitch.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    worldspawnKeys["_sun_yaw"]       = sun.Yaw.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    worldspawnKeys["_sun_intensity"] = sun.Intensity.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+                    // Optional: write a sky shader so the user can plug it into their .shader stack.
+                    if (args.Flag("emit-sky-shader"))
+                    {
+                        string skyPath = Path.ChangeExtension(outPath, ".sky.shader");
+                        File.WriteAllText(skyPath,
+                            $"// auto-generated sky shader from BspLightReSlopper sun detection\n" +
+                            $"textures/skies/bsplrs_inferred\n{{\n" +
+                            $"\tqer_editorimage textures/skies/sky\n" +
+                            $"\tsurfaceparm sky\n" +
+                            $"\tsurfaceparm noimpact\n" +
+                            $"\tsurfaceparm nolightmap\n" +
+                            $"\tq3map_sun {sun.Color.X:0.###} {sun.Color.Y:0.###} {sun.Color.Z:0.###} {sun.Intensity:0.##} {sun.Yaw:0.##} {sun.Pitch:0.##}\n" +
+                            $"\tskyParms - 512 -\n" +
+                            $"}}\n");
+                        log.Info($"wrote skybox shader: {skyPath}");
+                    }
+                }
+                else
+                {
+                    log.Info("sun: no clear sun signal (no SURF_SKY surfaces or normal-bin search below dominance threshold)");
+                }
+            }
+
             EntFileWriter.Write(outPath, guesses, new EntFileWriter.WriteOptions
             {
                 SourceBspName = resolved.DisplayName,
                 InferredCompile = infer.Display,
                 RuntimeSeconds = result.ElapsedSeconds.ToString("0.0") + "s",
                 CountsByType = new Dictionary<string, int> { ["point"] = guesses.Count },
+                WorldspawnKeys = worldspawnKeys.Count > 0 ? worldspawnKeys : null,
             });
-            log.Info($"wrote {outPath} ({guesses.Count} lights)");
+            log.Info($"wrote {outPath} ({guesses.Count} lights{(worldspawnKeys.Count > 0 ? ", + sun worldspawn keys" : "")})");
 
             // Compare with ground truth, if any.
             log.Section("ground truth comparison");

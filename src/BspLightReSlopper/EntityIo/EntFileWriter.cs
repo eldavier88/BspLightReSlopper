@@ -38,6 +38,11 @@ namespace BspLightReSlopper.EntityIo
             public IReadOnlyDictionary<string, string>? InferredCompile { get; init; }
             public string? RuntimeSeconds { get; init; }
             public IReadOnlyDictionary<string, int>? CountsByType { get; init; }
+            /// <summary>If non-null and non-empty, write a leading <c>worldspawn</c> entity
+            /// block with these key/value pairs (used by <see cref="Estimation.SunDetector"/>
+            /// for <c>_sun_*</c> keys). Caller is expected to merge these into the existing
+            /// .map's worldspawn manually; this is purely a writeback convenience.</summary>
+            public IReadOnlyDictionary<string, string>? WorldspawnKeys { get; init; }
         }
 
         public static void Write(string path, IReadOnlyList<GuessedLight> lights, WriteOptions options)
@@ -93,8 +98,22 @@ namespace BspLightReSlopper.EntityIo
             if (!string.IsNullOrEmpty(options.RuntimeSeconds))
                 sw.WriteLine("// estimator runtime: " + options.RuntimeSeconds);
 
-            // Entity blocks
             CultureInfo inv = CultureInfo.InvariantCulture;
+
+            // Optional worldspawn entity (sun keys, etc.). q3 expects worldspawn keys on
+            // entity 0; emitting it as a leading entity block lets the caller copy into
+            // their existing .map's worldspawn or use this .ent directly via
+            // `q3map2 -onlyents` when no worldspawn already exists.
+            if (options.WorldspawnKeys != null && options.WorldspawnKeys.Count > 0)
+            {
+                sw.WriteLine("{");
+                sw.WriteLine("\"classname\" \"worldspawn\"");
+                foreach (var kv in options.WorldspawnKeys)
+                    sw.WriteLine($"\"{kv.Key}\" \"{kv.Value}\"");
+                sw.WriteLine("}");
+            }
+
+            // Entity blocks
             foreach (var l in lights)
             {
                 sw.WriteLine("{");
