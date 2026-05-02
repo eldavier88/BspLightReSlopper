@@ -157,6 +157,7 @@ namespace BspLightReSlopper.Cli
             float meanPrecision = perMap.Average(r => r.Precision);
             float meanPosMedian = perMap.Average(r => r.PositionMedian);
             log.Info($"aggregate: recall={meanRecall:P1}, precision={meanPrecision:P1}, posErrMedian={meanPosMedian:F0}u");
+            log.Info("Metric definitions (plain language): see docs/metrics.md in the repository.");
             // Per-map table
             log.Info("");
             log.Info(string.Format("{0,-28} {1,5} {2,5} {3,5} {4,7} {5,8} {6,7} {7,8}", "map", "truth", "est", "match", "recall", "precision", "errMed", "elapsed"));

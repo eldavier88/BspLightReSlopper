@@ -19,6 +19,7 @@ namespace BspLightReSlopper
                     "train"                => TrainCommand.Run(parsed),
                     "dump-samples"         => DumpSamplesCommand.Run(parsed),
                     "build-synthetic-map"  => BuildSyntheticMapCommand.Run(parsed),
+                    "converge"             => ConvergeCommand.Run(parsed),
                     "help"                 => PrintHelp(),
                     "--help"               => PrintHelp(),
                     "-h"                   => PrintHelp(),
@@ -50,8 +51,11 @@ namespace BspLightReSlopper
             Console.WriteLine();
             Console.WriteLine("commands:");
             Console.WriteLine("  estimate    --assets <dir> --bsp <path | path.pk3!maps/foo.bsp>");
-            Console.WriteLine("              [-o <out.ent>] [--log <log>]");
+            Console.WriteLine("              [-o <out.ent>] [--log <log>] [--no-vis]");
             Console.WriteLine("              [--max-samples N] [--pivots N] [--max-lights N] [--seed N]");
+            Console.WriteLine("              [--half-lambert] [--infer-angle-model]");
+            Console.WriteLine("              [--minimize-lights] [--minimize-lights-tolerance F]");
+            Console.WriteLine("              [--refine-lights] [--refine-passes N] [--refine-step U]");
             Console.WriteLine();
             Console.WriteLine("  verify      --assets <dir> [--maps a,b,c | (default: all assets/maps/*.bsp)]");
             Console.WriteLine("              [--match-tolerance <units>] [--out <dir>]");
@@ -72,10 +76,14 @@ namespace BspLightReSlopper
             Console.WriteLine("               [--assets <dir>] [--max-samples N]");
             Console.WriteLine("               Diagnostic: dump every TexelSample to CSV.");
             Console.WriteLine();
+            Console.WriteLine("  converge     --assets <dir> --base-path <fs_basepath> --q3map2 <exe>");
+            Console.WriteLine("               [--resources <dir>] [--maps-index <jk2-sdk-maps.txt>]");
+            Console.WriteLine("               [--out <dir>] [--max-maps N] [--timeout-mins N] [--game jk2]");
+            Console.WriteLine("               SDK .map round-trip: estimate, relight, perceptual loss report.");
+            Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine();
-            Console.WriteLine("Phase A status: estimator is the iterative-greedy RANSAC version. Patches");
-            Console.WriteLine("are not yet tessellated; vertex-only lighting is not yet sampled.");
+            Console.WriteLine("See docs/metrics.md for recall, precision, perceptual loss, and related terms.");
             return 0;
         }
 
@@ -89,6 +97,6 @@ namespace BspLightReSlopper
 
     internal static class Version
     {
-        public const string String = "0.1.0-phase-a";
+        public const string String = "0.2.0";
     }
 }

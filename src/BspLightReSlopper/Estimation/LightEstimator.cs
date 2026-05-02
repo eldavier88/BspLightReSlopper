@@ -137,15 +137,18 @@ namespace BspLightReSlopper.Estimation
             public BspVis? Visibility { get; init; }
 
             /// <summary>
-            /// Use the q3map2 half-Lambert angle attenuation curve <c>((max(0,nL)*0.5+0.5)²</c>
-            /// instead of standard Lambert <c>max(0,nL)</c>. This is the default for the
-            /// JK2/JKA games (the netradiant-custom JKA gamepack sets <c>lightAngleHL = true</c>
-            /// and `-lightanglehl 1` is documented as the JK-family preset). Standard Lambert
-            /// underfits oblique-angle texels on those maps, which inflates fitted intensities
-            /// and biases positions toward perpendicular-rich regions of each light's footprint.
-            /// CLI defaults this to true for RBSP1 inputs and false for IBSP46 inputs.
+            /// Use q3map2 half-Lambert angle attenuation <c>((n·L̂)*0.5+0.5)²</c> instead of
+            /// standard Lambert <c>max(0,n·L̂)</c>. Shipped JK2/JKA maps were baked without
+            /// <c>-lightanglehl 1</c>; enable only when you know the BSP used that flag.
             /// </summary>
             public bool HalfLambert { get; init; }
+
+            /// <summary>When heuristics mark <c>fast=likely-on</c>, tighten
+            /// <see cref="EnvelopeMultiplier"/> toward this value (physical-envelope discard).</summary>
+            public float EnvelopeMultiplierFast { get; init; } = 2.0f;
+
+            /// <summary>When heuristics mark <c>fast=likely-off</c>, use this envelope multiplier.</summary>
+            public float EnvelopeMultiplierNoFast { get; init; } = 4.0f;
 
             /// <summary>If true (default), run <see cref="BlowoutDetector"/> as a pre-pass:
             /// blown (saturated + flat-gradient) texels are excluded from the LSQ pool, and
@@ -1018,16 +1021,11 @@ namespace BspLightReSlopper.Estimation
         }
 
         /// <summary>
-        /// q3map2's angle-attenuation factor. Standard Lambert <c>max(0, n·L̂)</c> is the Q3
-        /// default; half-Lambert <c>((min(n·L̂,1)·0.5 + 0.5)²</c> with a 0.001 dead-zone is
-        /// the JK2/JKA default (and the documented <c>-lightanglehl 1</c> mode). Half-Lambert
-        /// gives roughly 25%..100% lighting across the front hemisphere instead of
-        /// 0%..100%, which matters because a Lambert-only estimator on a half-Lambert-baked
-        /// map systematically overestimates light intensity (it has to compensate for the
-        /// "extra" oblique-angle brightness it can't explain) and biases positions toward
-        /// the perpendicular-rich part of each light's footprint.
+        /// q3map2's angle-attenuation factor. Standard Lambert <c>max(0, n·L̂)</c> is the
+        /// default for shipped Q3/JK2/JKA content; half-Lambert <c>((n·L̂)*0.5 + 0.5)²</c> with
+        /// a 0.001 dead-zone is enabled with <c>-lightanglehl 1</c>.
         /// </summary>
-        private static float AngleAttenuation(float ndotL, bool halfLambert)
+        internal static float AngleAttenuation(float ndotL, bool halfLambert)
         {
             if (!halfLambert)
                 return ndotL > 0f ? ndotL : 0f;
@@ -1079,6 +1077,87 @@ namespace BspLightReSlopper.Estimation
                 rB[i] += sign * db;
             }
             return support;
+        }
+
+        /// <summary>Sum of squared RGB errors between <see cref="TexelSample.Observed"/> and the
+        /// forward Lambert/half-Lambert prediction from the given lights (estimator photometric model).</summary>
+        public static float ForwardRgbSSE(IReadOnlyList<TexelSample> samples, IReadOnlyList<EstimatedLight> lights, bool halfLambert, float fade = 32f)
+        {
+            if (samples.Count == 0) return 0f;
+            float fade2 = fade * fade;
+            double acc = 0;
+            for (int i = 0; i < samples.Count; i++)
+            {
+                var s = samples[i];
+                float pr = 0, pg = 0, pb = 0;
+                for (int j = 0; j < lights.Count; j++)
+                {
+                    var L = lights[j];
+                    Vector3 Ivec = L.Color * L.Intensity;
+                    float dx = L.Origin.X - s.World.X, dy = L.Origin.Y - s.World.Y, dz = L.Origin.Z - s.World.Z;
+                    float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < 1e-3f) continue;
+                    float invD = 1f / MathF.Sqrt(d2);
+                    float ndotL = (s.Normal.X * dx + s.Normal.Y * dy + s.Normal.Z * dz) * invD;
+                    float angle = AngleAttenuation(ndotL, halfLambert);
+                    if (angle <= 0f) continue;
+                    float g = angle / (d2 + fade2);
+                    pr += Ivec.X * g;
+                    pg += Ivec.Y * g;
+                    pb += Ivec.Z * g;
+                }
+                float eR = s.Observed.X - pr, eG = s.Observed.Y - pg, eB = s.Observed.Z - pb;
+                acc += eR * eR + eG * eG + eB * eB;
+            }
+            return (float)acc;
+        }
+
+        /// <summary>L0-style greedy elimination: repeatedly drop the dimmest non-<see cref="EstimatedLight.BlownOut"/>
+        /// light if removing it raises <see cref="ForwardRgbSSE"/> by at most
+        /// <paramref name="relativeSseIncreaseTolerance"/> times the current SSE.</summary>
+        public static List<EstimatedLight> MinimizeLightCountGreedy(
+            IReadOnlyList<EstimatedLight> lights,
+            IReadOnlyList<TexelSample> samples,
+            bool halfLambert,
+            float fade,
+            float relativeSseIncreaseTolerance,
+            Logger? log = null)
+        {
+            if (lights.Count <= 1) return lights.ToList();
+            var list = lights.ToList();
+            float sse = ForwardRgbSSE(samples, list, halfLambert, fade);
+            if (sse < 1e-8f) return list;
+
+            bool progress = true;
+            while (progress && list.Count > 1)
+            {
+                progress = false;
+                int idx = -1;
+                float minI = float.MaxValue;
+                for (int i = 0; i < list.Count; i++)
+                {
+                    if (list[i].BlownOut) continue;
+                    if (list[i].Intensity < minI)
+                    {
+                        minI = list[i].Intensity;
+                        idx = i;
+                    }
+                }
+                if (idx < 0) break;
+                var trial = new List<EstimatedLight>(list.Count - 1);
+                for (int i = 0; i < list.Count; i++)
+                    if (i != idx) trial.Add(list[i]);
+
+                float newSse = ForwardRgbSSE(samples, trial, halfLambert, fade);
+                if ((newSse - sse) / sse <= relativeSseIncreaseTolerance)
+                {
+                    log?.Info($"  minimize-lights: removed dim candidate (sse {sse:F0} -> {newSse:F0}, +{100f * (newSse - sse) / sse:F1}%)");
+                    list = trial;
+                    sse = newSse;
+                    progress = true;
+                }
+            }
+            return list;
         }
     }
 }

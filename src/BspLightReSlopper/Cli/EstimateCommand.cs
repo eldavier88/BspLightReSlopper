@@ -118,13 +118,12 @@ namespace BspLightReSlopper.Cli
             // ----- Estimate -----
             log.Section("estimator");
             bool noVis = args.Flag("no-vis");
-            // Half-Lambert default: OFF. Standard Lambert max(0, n.L) is what shipped Q3 /
-            // JK2 / JKA / SoF2 maps were baked with; q3map2's -lightanglehl 1 is a modern
-            // option (popularised by Source/HL2 in 2004, post-dating JK2) and the netradiant-
-            // custom JK2/JKA game profiles do NOT enable it. Use --half-lambert only when you
-            // know the BSP was deliberately compiled with -lightanglehl 1 (or you're on a
-            // qfusion-family BSP where it's the default).
-            bool halfLambert = args.Flag("half-lambert");
+            bool halfLambert = args.Flag("half-lambert")
+                || (args.Flag("infer-angle-model") && infer.LightAngleHl);
+            float envMult = infer.FastUsed
+                ? new LightEstimator.Options().EnvelopeMultiplierFast
+                : new LightEstimator.Options().EnvelopeMultiplierNoFast;
+
             var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
             {
                 MaxPivotsPerRound = maxPivots,
@@ -133,9 +132,77 @@ namespace BspLightReSlopper.Cli
                 Collision = noVis ? null : collision,
                 Visibility = noVis ? null : vis,
                 HalfLambert = halfLambert,
+                EnvelopeMultiplier = envMult,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");
+
+            // ----- Bounce light suppression (before classification / .ent) -----
+            if (stack != null && !args.Flag("no-bounce-suppress"))
+            {
+                try
+                {
+                    log.Section("bounce suppression");
+                    var shaders = BspLightReSlopper.Shaders.ShaderParser.ParseAllInPk3Stack(stack);
+                    log.Info($"shaders parsed: {shaders.Count}");
+                    var albedoCache = new BspLightReSlopper.Shaders.AlbedoCache(stack, shaders);
+                    var bsResult = BspLightReSlopper.Estimation.BounceSuppressor.Filter(result.Lights, samples.Samples, bsp, albedoCache, halfLambert, log: log);
+                    var (h, m) = albedoCache.Stats();
+                    log.Info($"albedo cache: {h} hits / {m} misses");
+                    result = new LightEstimator.Result
+                    {
+                        Lights = bsResult.KeptLights,
+                        InitialEnergy = result.InitialEnergy,
+                        FinalResidualEnergy = result.FinalResidualEnergy,
+                        RoundsRun = result.RoundsRun,
+                        RoundsAccepted = result.RoundsAccepted,
+                        RoundsRejected = result.RoundsRejected,
+                        ElapsedSeconds = result.ElapsedSeconds,
+                    };
+                }
+                catch (Exception ex)
+                {
+                    log.Warn($"bounce suppression failed: {ex.Message}");
+                }
+            }
+
+            if (args.Flag("minimize-lights"))
+            {
+                float tol = float.TryParse(args.Get("minimize-lights-tolerance"), out float t) ? t : 0.02f;
+                var minimized = LightEstimator.MinimizeLightCountGreedy(result.Lights, samples.Samples, halfLambert, 32f, tol, log);
+                result = new LightEstimator.Result
+                {
+                    Lights = minimized,
+                    InitialEnergy = result.InitialEnergy,
+                    FinalResidualEnergy = result.FinalResidualEnergy,
+                    RoundsRun = result.RoundsRun,
+                    RoundsAccepted = result.RoundsAccepted,
+                    RoundsRejected = result.RoundsRejected,
+                    ElapsedSeconds = result.ElapsedSeconds,
+                };
+            }
+
+            if (args.Flag("refine-lights"))
+            {
+                var rOpts = new BspLightReSlopper.Metrics.PerceptualRefiner.Options
+                {
+                    Passes = int.TryParse(args.Get("refine-passes"), out int rp) ? rp : 3,
+                    StepStart = float.TryParse(args.Get("refine-step"), out float rs) ? rs : 32f,
+                };
+                log.Section("photometric refine (forward SSE)");
+                var rf = BspLightReSlopper.Metrics.PerceptualRefiner.RefineRgb(samples.Samples, result.Lights, halfLambert, 32f, rOpts);
+                log.Info($"forward SSE: {rf.InitialSse:F1} -> {rf.FinalSse:F1}");
+                result = new LightEstimator.Result
+                {
+                    Lights = new List<EstimatedLight>(rf.Lights),
+                    InitialEnergy = result.InitialEnergy,
+                    FinalResidualEnergy = result.FinalResidualEnergy,
+                    RoundsRun = result.RoundsRun,
+                    RoundsAccepted = result.RoundsAccepted,
+                    RoundsRejected = result.RoundsRejected,
+                    ElapsedSeconds = result.ElapsedSeconds,
+                };
+            }
 
             // ----- Write .ent -----
             log.Section("output");
@@ -227,6 +294,7 @@ namespace BspLightReSlopper.Cli
                 guesses.Add(g);
             }
             log.Info($"types: point={pointCount}, linear={linearCount}, spot={spotCount}");
+
             // ----- Sun detection (E5) -----
             var worldspawnKeys = new Dictionary<string, string>();
             if (!args.Flag("no-sun"))

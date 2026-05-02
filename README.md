@@ -12,6 +12,9 @@ CPU-only, .NET 5.0, single CLI binary `bsplrs`. No GPU / CUDA / OpenCL.
 bsplrs estimate --assets <asset-dir> --bsp <path | path.pk3!maps/foo.bsp>
                 [-o <out.ent>] [--log <log>] [--no-vis]
                 [--max-samples N] [--pivots N] [--max-lights N] [--seed N]
+                [--half-lambert] [--infer-angle-model]
+                [--minimize-lights] [--minimize-lights-tolerance F]
+                [--refine-lights] [--refine-passes N] [--refine-step U]
 ```
 
 Inputs:
@@ -62,7 +65,16 @@ bsplrs train        --source-map <src.map> --base-path <fs_basepath>
                     Phase B refinement loop: scatter → recompile → estimate → score
                     against the recompiled BSP's preserved ground truth → CSV per
                     round. Used to tune the estimator across compile-setting matrices.
+
+bsplrs converge     --assets <dir> --base-path <fs_basepath> --q3map2 <q3map2.exe>
+                    [--resources <dir>] [--maps-index jk2-sdk-maps.txt] [--out <dir>]
+                    Estimate from each reference BSP, inject lights into SDK .maps,
+                    recompile with inferred settings, write convergence.md (perceptual loss).
+
+bsplrs dump-samples / build-synthetic-map — see bsplrs help
 ```
+
+**Metrics:** recall, precision, perceptual MSE, and related terms are explained for non-specialists in [docs/metrics.md](docs/metrics.md).
 
 ## Crucial rule: no light entities ⇒ unusable for verification
 

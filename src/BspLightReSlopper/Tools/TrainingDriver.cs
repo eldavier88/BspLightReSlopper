@@ -215,15 +215,16 @@ namespace BspLightReSlopper.Tools
                 foreach (var s in samples.Samples) { bboxMin = Vector3.Min(bboxMin, s.World); bboxMax = Vector3.Max(bboxMax, s.World); }
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
                 var estSw = System.Diagnostics.Stopwatch.StartNew();
-                // Standard Lambert by default. Training only flips this on when the
-                // CompileSettingsMatrix is asked to include `-lightanglehl 1` rounds (not
-                // currently in the matrix; an eventual addition).
+                var infer = CompileSettingsInferer.Infer(bsp, samples.Samples);
                 var estimate = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
                 {
                     MaxLights = o.EstimatorMaxLights,
                     MaxPivotsPerRound = o.EstimatorPivots,
                     RandomSeed = seed,
-                    HalfLambert = false,
+                    HalfLambert = settings.LightAngleHl,
+                    EnvelopeMultiplier = infer.FastUsed
+                        ? new LightEstimator.Options().EnvelopeMultiplierFast
+                        : new LightEstimator.Options().EnvelopeMultiplierNoFast,
                 });
                 estSw.Stop();
 
@@ -235,7 +236,6 @@ namespace BspLightReSlopper.Tools
                     estimate.Lights.Select(x => x.Color).ToList(),
                     o.MatchTolerance);
 
-                var infer = CompileSettingsInferer.Infer(bsp, samples.Samples);
                 log.Info($"truth={gt.Lights.Count} est={estimate.Lights.Count} matched={match.Matches.Count} recall={match.Recall:P1} precision={match.Precision:P1} posErr={match.MedianPositionError:F0}u inferred={string.Join(' ', infer.Display.Select(kv => kv.Key + '=' + kv.Value))}");
 
                 var rr = new RoundResult

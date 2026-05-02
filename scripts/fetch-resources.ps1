@@ -12,8 +12,8 @@
       netradiant-custom-bin\          q3map2.exe + radiant.exe + gamepacks\ (extracted)
       netradiant-custom-src\          git clone Garux/netradiant-custom (read-only ref)
       quake3-src\                     git clone id-Software/Quake-III-Arena (cm_*.c ref)
-      jk2-sdk\                        Jedi Outcast SDK with example .map files
-      jka-sdk\                        Jedi Academy SDK with example .map files
+      jk2-sdk\                        Jedi Outcast SDK (April 2002) + example .map files
+      jk2-sdk-2\                      Jedi Outcast SDK v2 (JK2EditingTools2) + more .maps
       jk2-assets\                     symlink/junction to existing JK2 assets dir
       paths.env.ps1                   convenience script: dot-source to set env vars
 
@@ -233,6 +233,7 @@ if (Has-MapFiles $jk2sdk) {
     $jk2Inst = Find-Installer @(
         (Join-Path $ResourcesRoot "JK2EditingTools\JK2EditingTools.exe"),
         (Join-Path $ResourcesRoot "JK2EditingTools.exe"),
+        (Join-Path $ResourcesRoot "BspLightReSlopper-resources\JK2EditingTools\JK2EditingTools.exe"),
         "C:\Users\david\Downloads\JK2EditingTools\JK2EditingTools.exe"
     )
     if ($jk2Inst) {
@@ -244,19 +245,20 @@ if (Has-MapFiles $jk2sdk) {
     }
 }
 
-# JK2EditingTools2 (the v2 SDK update, includes more example .map files) -> jka-sdk/
-$jkasdk = Join-Path $ResourcesRoot "jka-sdk"
-Write-Step "JK2 SDK v2 (JK2EditingTools2.exe) -> $jkasdk"
-if (Has-MapFiles $jkasdk) {
+# JK2EditingTools v2 -> jk2-sdk-2/ (same silent-extract pipeline as original SDK)
+$jk2sdk2 = Join-Path $ResourcesRoot "jk2-sdk-2"
+Write-Step "JK2 SDK v2 (JK2EditingTools2.exe) -> $jk2sdk2"
+if (Has-MapFiles $jk2sdk2) {
     Write-Skip "*.map files already present"
 } else {
     $jkaInst = Find-Installer @(
         (Join-Path $ResourcesRoot "JK2EditingTools2\JK2EditingTools2.exe"),
         (Join-Path $ResourcesRoot "JK2EditingTools2.exe"),
+        (Join-Path $ResourcesRoot "BspLightReSlopper-resources\JK2EditingTools2\JK2EditingTools2.exe"),
         "C:\Users\david\Downloads\JK2EditingTools2\JK2EditingTools2.exe"
     )
     if ($jkaInst) {
-        $r = Install-JKEditingTool -InstallerPath $jkaInst -DestDir $jkasdk
+        $r = Install-JKEditingTool -InstallerPath $jkaInst -DestDir $jk2sdk2
         if ($r.Installed) { Write-Ok "extracted ($($r.Reason))" }
         else { Write-Warn2 "$($r.Reason)" }
     } else {
@@ -272,7 +274,7 @@ if (Has-MapFiles $jkasdk) {
 $mapsIndex = Join-Path $ResourcesRoot "jk2-sdk-maps.txt"
 $allMaps = New-Object System.Collections.Generic.List[string]
 $prefabCount = 0
-foreach ($d in @($jk2sdk, $jkasdk)) {
+foreach ($d in @($jk2sdk, $jk2sdk2)) {
     if (Test-Path $d) {
         Get-ChildItem -Path $d -Recurse -Filter "*.map" -ErrorAction SilentlyContinue | ForEach-Object {
             if ($_.FullName -match '\\prefabs\\') {
@@ -330,7 +332,8 @@ $content = @"
 `$env:BSPLRS_Q3MAP2     = '$q3map2'
 `$env:BSPLRS_JK2_ASSETS = '$assetsResolved'
 `$env:BSPLRS_JK2_SDK    = '$jk2sdk'
-`$env:BSPLRS_JKA_SDK    = '$jkasdk'
+`$env:BSPLRS_JKA_SDK    = '$jk2sdk2'
+`$env:BSPLRS_JK2_SDK2   = '$jk2sdk2'
 `$env:BSPLRS_QUAKE3_SRC = '$q3src'
 "@
 Set-Content -Path $pathsEnv -Value $content -Encoding utf8
@@ -346,7 +349,8 @@ $summary = [ordered]@{
     "BSPLRS_Q3MAP2"      = $q3map2
     "BSPLRS_JK2_ASSETS"  = $assetsResolved
     "BSPLRS_JK2_SDK"     = $jk2sdk
-    "BSPLRS_JKA_SDK"     = $jkasdk
+    "BSPLRS_JKA_SDK"     = $jk2sdk2
+    "BSPLRS_JK2_SDK2"    = $jk2sdk2
     "BSPLRS_QUAKE3_SRC"  = $q3src
 }
 foreach ($kv in $summary.GetEnumerator()) {
