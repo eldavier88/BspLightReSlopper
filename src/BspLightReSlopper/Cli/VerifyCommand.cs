@@ -99,10 +99,10 @@ namespace BspLightReSlopper.Cli
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
 
                 bool noVis = args.Flag("no-vis");
-                bool halfLambertDefault = bsp.Format is BspLightReSlopper.Bsp.Formats.Rbsp1Format;
-                bool halfLambert = args.Flag("no-half-lambert") ? false
-                                  : args.Flag("half-lambert") ? true
-                                  : halfLambertDefault;
+                // Half-Lambert default OFF — see EstimateCommand for the rationale (shipped
+                // JK2/JKA/SoF2/Q3A maps don't use it; only opt in if you know the recompile
+                // was made with -lightanglehl 1).
+                bool halfLambert = args.Flag("half-lambert");
                 var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
                 {
                     MaxPivotsPerRound = maxPivots,

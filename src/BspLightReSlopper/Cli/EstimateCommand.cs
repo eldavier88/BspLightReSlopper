@@ -96,12 +96,13 @@ namespace BspLightReSlopper.Cli
             // ----- Estimate -----
             log.Section("estimator");
             bool noVis = args.Flag("no-vis");
-            // Half-Lambert default per format: JK2/JKA (RBSP1) ship that way, Q3A (IBSP46)
-            // does not. Either side can be forced via --half-lambert / --no-half-lambert.
-            bool halfLambertDefault = bsp.Format is BspLightReSlopper.Bsp.Formats.Rbsp1Format;
-            bool halfLambert = args.Flag("no-half-lambert") ? false
-                              : args.Flag("half-lambert") ? true
-                              : halfLambertDefault;
+            // Half-Lambert default: OFF. Standard Lambert max(0, n.L) is what shipped Q3 /
+            // JK2 / JKA / SoF2 maps were baked with; q3map2's -lightanglehl 1 is a modern
+            // option (popularised by Source/HL2 in 2004, post-dating JK2) and the netradiant-
+            // custom JK2/JKA game profiles do NOT enable it. Use --half-lambert only when you
+            // know the BSP was deliberately compiled with -lightanglehl 1 (or you're on a
+            // qfusion-family BSP where it's the default).
+            bool halfLambert = args.Flag("half-lambert");
             var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
             {
                 MaxPivotsPerRound = maxPivots,
