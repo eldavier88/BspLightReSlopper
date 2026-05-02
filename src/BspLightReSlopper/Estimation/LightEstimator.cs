@@ -147,6 +147,14 @@ namespace BspLightReSlopper.Estimation
             /// </summary>
             public bool HalfLambert { get; init; }
 
+            /// <summary>If true (default), run <see cref="BlowoutDetector"/> as a pre-pass:
+            /// blown (saturated + flat-gradient) texels are excluded from the LSQ pool, and
+            /// blown-cluster candidates are added to the accepted lights set BEFORE the
+            /// greedy peel runs. Saturated texels carry essentially zero positional info
+            /// because their actual brightness was clipped at compile time; feeding them to
+            /// the LSQ corrupts the fit by pulling positions toward saturated centroids.</summary>
+            public bool DetectBlowouts { get; init; } = true;
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -192,13 +200,56 @@ namespace BspLightReSlopper.Estimation
             else
                 log?.Info("  angle attenuation: standard Lambert (Q3A default)");
 
-            float initialEnergy = SumSq(rR, rG, rB);
-            float currentEnergy = initialEnergy;
-            log?.Info($"  initial residual energy: {initialEnergy:F2} ({n} samples)");
-
+            // ---- Phase E1 pre-pass: blow-out detection. Saturated texels with flat
+            // gradient carry no positional info and corrupt the LSQ; mask them out and
+            // seed the accepted-lights set with cluster-derived candidates. The seeded
+            // lights' contribution gets subtracted from the residual before the greedy peel
+            // starts so the rest of the algorithm works on de-blown brightness.
             var lights = new List<EstimatedLight>();
             var lightOrigins = new List<Vector3>();
             var lightIntensities = new List<Vector3>();
+            BlowoutDetector.Result? blowResult = null;
+            if (options.DetectBlowouts)
+            {
+                blowResult = BlowoutDetector.Detect(samples, log: log);
+                foreach (var seed in blowResult.PointCandidates)
+                {
+                    lights.Add(seed);
+                    lightOrigins.Add(seed.Origin);
+                    lightIntensities.Add(seed.Color * seed.Intensity);
+                }
+                // Mask blown texels out of the LSQ residuals: zero them so they contribute
+                // nothing to subsequent fits. Their original brightness is unrecoverable
+                // (clipped at compile time), so leaving them in just adds noise.
+                if (blowResult.BlownTexelCount > 0)
+                {
+                    for (int i = 0; i < n; i++)
+                    {
+                        if (blowResult.BlownMask[i]) { rR[i] = 0; rG[i] = 0; rB[i] = 0; }
+                    }
+                }
+                // Subtract seeded lights' predicted contribution from the (de-blown) residual
+                // so the greedy peel doesn't try to fit them again.
+                if (blowResult.PointCandidates.Count > 0)
+                {
+                    var emptyClusters = new int[n];
+                    foreach (var seed in blowResult.PointCandidates)
+                    {
+                        ApplyContribution(seed.Origin, seed.Color * seed.Intensity,
+                            px, py, pz, nx, ny, nz, rR, rG, rB, emptyClusters,
+                            n, options.Fade * options.Fade,
+                            sign: -1f, countSupporting: false, supportingFraction: 0f,
+                            halfLambert: options.HalfLambert,
+                            vis: null, candCluster: 0);
+                    }
+                }
+            }
+
+            float initialEnergy = SumSq(rR, rG, rB);
+            float currentEnergy = initialEnergy;
+            log?.Info($"  initial residual energy: {initialEnergy:F2} ({n} samples" +
+                     (blowResult != null ? $", {blowResult.BlownTexelCount} blown / masked" : "") + ")");
+
             float fade2 = options.Fade * options.Fade;
             float supportR2 = options.SupportRadius * options.SupportRadius;
             int consecutiveRejects = 0;
