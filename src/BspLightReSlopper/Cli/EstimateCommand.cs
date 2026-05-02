@@ -60,10 +60,32 @@ namespace BspLightReSlopper.Cli
             var vis = new BspVis(bsp);
             log.Info($"vis: {(vis.HasVis ? $"{vis.NumClusters} clusters / {vis.BytesPerCluster} bytes-per-cluster" : "absent (no -vis stage or single-leaf map; estimator falls back to non-visibility mode)")}");
 
-            // ----- Sample texels -----
+            // ----- Sample texels (lightmap-lit surfaces) -----
             log.Section("texel sampling");
             var atlas = LightmapAtlas.FromBsp(bsp);
             var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, collision);
+
+            // ----- Sample vertex-lit surfaces (E3) -----
+            // Surfaces with no lightmap path carry their lighting in per-vertex RGB. Without
+            // this pass JK2 vertex-lit surfaces (pit.bsp's central crater, much of doom_*)
+            // don't contribute any signal to the estimator.
+            var vertexSamples = VertexLightSampler.Sample(bsp, collision);
+            log.Info($"vertex-lit surfaces: {vertexSamples.VertexLitSurfaces} ({vertexSamples.VertexLitSurfacesWithoutColor} with no vertex color), emitted {vertexSamples.Samples.Count} extra samples");
+            if (vertexSamples.Samples.Count > 0)
+            {
+                var merged = new System.Collections.Generic.List<TexelSample>(samples.Samples.Count + vertexSamples.Samples.Count);
+                merged.AddRange(samples.Samples);
+                merged.AddRange(vertexSamples.Samples);
+                samples = new TexelSampler.SampleResult
+                {
+                    Samples = merged,
+                    LitTexelsConsidered = samples.LitTexelsConsidered + vertexSamples.Samples.Count,
+                    UnlitSkipped = samples.UnlitSkipped,
+                    OutOfTriangleSamples = samples.OutOfTriangleSamples,
+                    StagesProcessed = samples.StagesProcessed + vertexSamples.StagesProcessed,
+                    SurfacesSampled = samples.SurfacesSampled + vertexSamples.VertexLitSurfaces,
+                };
+            }
             log.Info($"considered: {samples.LitTexelsConsidered}, samples: {samples.Samples.Count}, unlit-skipped: {samples.UnlitSkipped}, outside-tris: {samples.OutOfTriangleSamples}");
             log.Info($"surfaces sampled: {samples.SurfacesSampled}, stages processed: {samples.StagesProcessed}");
             if (samples.Samples.Count == 0)

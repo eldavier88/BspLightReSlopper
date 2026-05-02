@@ -11,6 +11,7 @@ using BspLightReSlopper.Lightmaps;
 using BspLightReSlopper.Pk3;
 using BspLightReSlopper.Sampling;
 using BspLightReSlopper.Surfaces;
+// (TexelSample is in BspLightReSlopper.Sampling already)
 using BspLightReSlopper.Util;
 
 namespace BspLightReSlopper.Cli
@@ -94,6 +95,14 @@ namespace BspLightReSlopper.Cli
                 var collision = new BspCollision(bsp);
                 var vis = new BspVis(bsp);
                 var samples = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, collision);
+                var vertexSamples = VertexLightSampler.Sample(bsp, collision);
+                if (vertexSamples.Samples.Count > 0)
+                {
+                    var merged = new List<TexelSample>(samples.Samples.Count + vertexSamples.Samples.Count);
+                    merged.AddRange(samples.Samples);
+                    merged.AddRange(vertexSamples.Samples);
+                    samples = new TexelSampler.SampleResult { Samples = merged };
+                }
                 Vector3 bboxMin = new(float.PositiveInfinity), bboxMax = new(float.NegativeInfinity);
                 foreach (var s in samples.Samples) { bboxMin = Vector3.Min(bboxMin, s.World); bboxMax = Vector3.Max(bboxMax, s.World); }
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
