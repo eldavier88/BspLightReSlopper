@@ -3,7 +3,11 @@ using System.IO;
 using System.Linq;
 using BspLightReSlopper.Bsp;
 using BspLightReSlopper.EntityIo;
+using BspLightReSlopper.Heuristics;
+using BspLightReSlopper.Lightmaps;
 using BspLightReSlopper.Pk3;
+using BspLightReSlopper.Sampling;
+using BspLightReSlopper.Surfaces;
 
 namespace BspLightReSlopper.Cli
 {
@@ -45,6 +49,17 @@ namespace BspLightReSlopper.Cli
             var gt = GroundTruth.Extract(bsp.EntitiesText);
             Console.WriteLine($"ground-truth lights: {gt.Lights.Count}  (sun-worldspawn={gt.HasSunWorldspawn})  usable={gt.IsUsable}");
             if (!gt.IsUsable) Console.WriteLine($"  reason: {gt.SkipReason}");
+
+            if (!args.Flag("no-infer"))
+            {
+                var unpacked = SurfaceUnpacker.Unpack(bsp);
+                var atlas = LightmapAtlas.FromBsp(bsp);
+                var samp = TexelSampler.Sample(bsp, unpacked, atlas, new TexelSampler.SampleOptions { MaxSamples = 30_000 });
+                var inf = CompileSettingsInferer.Infer(bsp, samp.Samples);
+                Console.WriteLine("inferred:");
+                foreach (var kv in inf.Display)
+                    Console.WriteLine($"  {kv.Key} = {kv.Value}");
+            }
 
             if (args.Flag("dump-surfaces"))
             {
