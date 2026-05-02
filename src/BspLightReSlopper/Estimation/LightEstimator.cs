@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using System.Threading.Tasks;
 using BspLightReSlopper.Collision;
@@ -107,6 +108,23 @@ namespace BspLightReSlopper.Estimation
             /// refit holding all positions fixed. Redistributes intensity to compensate for
             /// the residual leakage that greedy peeling leaves between overlapping lights.</summary>
             public bool JointRefitAfter { get; init; } = true;
+
+            /// <summary>If true, after the joint refit, merge accepted lights whose origins
+            /// are within <see cref="MergeRadius"/> of each other. The greedy peel often
+            /// places several closely-spaced candidates as it refines its estimate of one
+            /// real light; collapsing them improves precision (one-truth-to-many-est is the
+            /// dominant source of false positives on dense maps) at near-zero recall cost.</summary>
+            public bool MergeNearbyAfter { get; init; } = true;
+
+            /// <summary>Distance (world units) within which two estimates are merged into one.
+            /// q3map2's typical light-sample grid resolution is 64u, which is also the
+            /// smallest visually meaningful separation between distinct fixtures.</summary>
+            public float MergeRadius { get; init; } = 64f;
+
+            /// <summary>After merge + refit, drop any light whose intensity is below this
+            /// fraction of the median surviving light's intensity. Catches noise lights that
+            /// the joint refit assigned near-zero intensity to.</summary>
+            public float WeakLightCullFraction { get; init; } = 0.05f;
 
             /// <summary>BSP collision module for visibility queries. When supplied alongside
             /// <see cref="Visibility"/>, the per-candidate fit only includes texel samples
@@ -436,6 +454,70 @@ namespace BspLightReSlopper.Estimation
                 currentEnergy = SumSq(rR, rG, rB);
             }
 
+            // ---- 8. Merge nearby duplicates + cull weak lights ----
+            if (options.MergeNearbyAfter && lights.Count > 1)
+            {
+                int beforeMerge = lights.Count;
+                lights = MergeNearby(lights, options.MergeRadius);
+                int afterMerge = lights.Count;
+                if (afterMerge < beforeMerge)
+                {
+                    log?.Info($"  merge: {beforeMerge} -> {afterMerge} lights (within {options.MergeRadius:F0}u)");
+                    // Re-do joint refit on the merged set so intensities reflect the new
+                    // positions properly. Reset residuals to the original samples first.
+                    if (options.JointRefitAfter)
+                    {
+                        for (int i = 0; i < n; i++)
+                        {
+                            rR[i] = samples[i].Observed.X;
+                            rG[i] = samples[i].Observed.Y;
+                            rB[i] = samples[i].Observed.Z;
+                        }
+                        var mergedOrigins = new List<Vector3>(lights.Count);
+                        var mergedIntensities = new List<Vector3>(lights.Count);
+                        for (int li = 0; li < lights.Count; li++)
+                        {
+                            mergedOrigins.Add(lights[li].Origin);
+                            mergedIntensities.Add(lights[li].Color * lights[li].Intensity);
+                        }
+                        JointRefit(mergedOrigins, mergedIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
+                            fade2, options.MaxIntensityCap, options.HalfLambert, log);
+                        for (int li = 0; li < lights.Count; li++)
+                        {
+                            var I = mergedIntensities[li];
+                            float scalar = MathF.Max(I.X, MathF.Max(I.Y, I.Z));
+                            Vector3 chroma = scalar > 0 ? I / scalar : Vector3.One;
+                            var prior = lights[li];
+                            lights[li] = new EstimatedLight
+                            {
+                                Origin = prior.Origin,
+                                Color = chroma,
+                                Intensity = scalar,
+                                Confidence = prior.Confidence,
+                                SupportingTexels = prior.SupportingTexels,
+                                ResidualEnergyExplainedFraction = prior.ResidualEnergyExplainedFraction,
+                                Method = prior.Method.Contains("+merged") ? prior.Method : prior.Method + "+merged",
+                                BlownOut = prior.BlownOut,
+                            };
+                        }
+                        currentEnergy = SumSq(rR, rG, rB);
+                    }
+                }
+
+                // Weak-light cull: drop any light below `WeakLightCullFraction × median I`.
+                if (options.WeakLightCullFraction > 0 && lights.Count > 2)
+                {
+                    var sortedI = lights.Select(l => l.Intensity).OrderBy(v => v).ToArray();
+                    float median = sortedI[sortedI.Length / 2];
+                    float floor = median * options.WeakLightCullFraction;
+                    int beforeCull = lights.Count;
+                    lights = lights.Where(l => l.Intensity >= floor).ToList();
+                    int afterCull = lights.Count;
+                    if (afterCull < beforeCull)
+                        log?.Info($"  weak-cull: dropped {beforeCull - afterCull} lights below I={floor:F1} ({options.WeakLightCullFraction:P0} of median)");
+                }
+            }
+
             return new Result
             {
                 Lights = lights,
@@ -449,6 +531,96 @@ namespace BspLightReSlopper.Estimation
         }
 
         // ---------- helpers ----------
+
+        /// <summary>Single-link agglomerative merge of estimated lights within
+        /// <paramref name="radius"/> of each other. Merged-cluster origin is the
+        /// intensity-weighted centroid; intensity is summed; chroma is the intensity-
+        /// weighted average so the brighter contributor's hue dominates.</summary>
+        private static List<EstimatedLight> MergeNearby(List<EstimatedLight> lights, float radius)
+        {
+            float r2 = radius * radius;
+            int n = lights.Count;
+            var parent = new int[n];
+            for (int i = 0; i < n; i++) parent[i] = i;
+            int Find(int x) { while (parent[x] != x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; }
+            void Union(int a, int b) { a = Find(a); b = Find(b); if (a != b) parent[a] = b; }
+
+            // O(n²) is fine for n ≤ a few hundred lights, the typical estimate count. A
+            // proper kd-tree only matters at 10k+.
+            for (int i = 0; i < n; i++)
+            {
+                for (int j = i + 1; j < n; j++)
+                {
+                    if ((lights[i].Origin - lights[j].Origin).LengthSquared() <= r2)
+                        Union(i, j);
+                }
+            }
+
+            // Collect cluster members.
+            var groups = new Dictionary<int, List<int>>();
+            for (int i = 0; i < n; i++)
+            {
+                int r = Find(i);
+                if (!groups.TryGetValue(r, out var list))
+                {
+                    list = new List<int>();
+                    groups[r] = list;
+                }
+                list.Add(i);
+            }
+
+            var result = new List<EstimatedLight>(groups.Count);
+            foreach (var kv in groups)
+            {
+                var members = kv.Value;
+                if (members.Count == 1) { result.Add(lights[members[0]]); continue; }
+                Vector3 centroid = Vector3.Zero;
+                Vector3 colorSum = Vector3.Zero;
+                float intensitySum = 0;
+                int support = 0;
+                float confidence = 0;
+                float explained = 0;
+                bool anyBlownOut = false;
+                string method = "merged(" + members.Count + ")";
+                foreach (int idx in members)
+                {
+                    var l = lights[idx];
+                    centroid += l.Origin * l.Intensity;
+                    colorSum += l.Color * l.Intensity;
+                    intensitySum += l.Intensity;
+                    support += l.SupportingTexels;
+                    confidence = MathF.Max(confidence, l.Confidence);
+                    explained = MathF.Max(explained, l.ResidualEnergyExplainedFraction);
+                    if (l.BlownOut) anyBlownOut = true;
+                }
+                if (intensitySum < 1e-6f)
+                {
+                    // All members essentially zero-intensity; emit one centroid with summed
+                    // intensity = sum (which is ~0) and uniform color.
+                    Vector3 avgPos = members.Aggregate(Vector3.Zero, (a, i) => a + lights[i].Origin) / members.Count;
+                    result.Add(new EstimatedLight { Origin = avgPos, Color = Vector3.One, Intensity = 0, Method = method });
+                    continue;
+                }
+                centroid /= intensitySum;
+                Vector3 chroma = colorSum / intensitySum;
+                float maxC = MathF.Max(chroma.X, MathF.Max(chroma.Y, chroma.Z));
+                if (maxC > 1f) chroma /= maxC; // renormalise hue so max channel = 1
+                result.Add(new EstimatedLight
+                {
+                    Origin = centroid,
+                    Color = chroma,
+                    Intensity = intensitySum,
+                    Confidence = confidence,
+                    SupportingTexels = support,
+                    ResidualEnergyExplainedFraction = explained,
+                    Method = method,
+                    BlownOut = anyBlownOut,
+                });
+            }
+            // Stable order by descending intensity so the .ent output is consistent.
+            result.Sort((a, b) => b.Intensity.CompareTo(a.Intensity));
+            return result;
+        }
 
         private static Vector3 AxisStep(int axis, float v) => axis switch
         {
