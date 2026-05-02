@@ -85,6 +85,33 @@ namespace BspLightReSlopper.Tests
             Assert.True(audit.DuplicateSamePixel >= 1);
         }
 
+        [Fact]
+        public void ConsistentLmVecsQuad_PlanarForwardCheckActuallyRuns()
+        {
+            // The default quad has lmVec magnitudes that don't match its world span, so
+            // IsLmVecsSelfConsistent returns false and the planar forward gate is skipped.
+            // The consistent-lmVecs variant has lmVec = (8,0,0) / (0,8,0) for a 32-pixel
+            // atlas spanning 256u; the planar forward check then fires AND must pass.
+            var bsp = BspLoader.LoadFromBytes(TestBsp.BuildIbsp46QuadWithGradientLightmap(32,
+                (ax, ay) => ((byte)(ax * 8), (byte)(ay * 8), (byte)128),
+                consistentLmVecs: true));
+            var unpacked = SurfaceUnpacker.Unpack(bsp);
+            var atlas = LightmapAtlas.FromBsp(bsp);
+            var samples = TexelSampler.Sample(bsp, unpacked, atlas,
+                new TexelSampler.SampleOptions { MaxSamples = 100_000 });
+            var audit = TexelFetchAuditor.Audit(bsp, unpacked, atlas, samples.Samples);
+
+            Assert.True(audit.AllPass,
+                $"atlas={audit.AtlasRoundtripFailures} bary={audit.BarycentricRoundtripFailures} planar={audit.PlanarForwardFailures} dup={audit.DuplicateSamePixel}; first fails: {string.Join(" | ", audit.FirstFailureMessages)}");
+            // MaxPlanarWorldError must be POSITIVE -- proves the planar check actually
+            // ran (else it stays at its sentinel 0). For a 32×32 atlas spanning 256u and
+            // the barycentric/forward paths agreeing, the per-pixel world-error should be
+            // sub-half-pixel (~4u tolerance, observed delta typically 0).
+            Assert.True(audit.Audited > 0);
+            Assert.True(audit.MaxPlanarWorldError <= 4f,
+                $"planar world err too large: {audit.MaxPlanarWorldError}u");
+        }
+
         [SkippableFact]
         public void RealJk2Map_AuditorReportsNoAtlasMismatches()
         {

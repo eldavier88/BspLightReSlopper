@@ -42,6 +42,15 @@ namespace BspLightReSlopper.Tests
         /// to world ((ax + 0.5)/lmSize * 256 - 128, (ay + 0.5)/lmSize * 256 - 128, 0).
         /// </summary>
         public static byte[] BuildIbsp46QuadWithGradientLightmap(int lmSize, Func<int, int, (byte r, byte g, byte b)> atlasPixel)
+            => BuildIbsp46QuadWithGradientLightmap(lmSize, atlasPixel, consistentLmVecs: false);
+
+        /// <summary>Like <see cref="BuildIbsp46QuadWithGradientLightmap(int,Func{int,int,(byte,byte,byte)})"/>
+        /// but with <paramref name="consistentLmVecs"/>=true the synthetic surface's
+        /// <c>lightmapVecs</c> are scaled to actually span the quad in world units (so
+        /// <see cref="BspLightReSlopper.Sampling.TexelFetchAuditor"/>'s planar forward
+        /// check gates ON and is exercised, rather than skipped via the consistency
+        /// gate).</summary>
+        public static byte[] BuildIbsp46QuadWithGradientLightmap(int lmSize, Func<int, int, (byte r, byte g, byte b)> atlasPixel, bool consistentLmVecs)
         {
             if (lmSize < 4 || lmSize > 128) throw new ArgumentOutOfRangeException(nameof(lmSize));
             var fmt = new Ibsp46Format();
@@ -107,8 +116,14 @@ namespace BspLightReSlopper.Tests
             BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), lmSize); p += 4;   // lightmapWidth
             BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), lmSize); p += 4;   // lightmapHeight
             WriteVec3(surf, p, new Vector3(-128, -128, 0)); p += 12;
-            WriteVec3(surf, p, new Vector3(2, 0, 0)); p += 12;
-            WriteVec3(surf, p, new Vector3(0, 2, 0)); p += 12;
+            // 256u quad spans `lmSize` atlas pixels => world-units-per-pixel = 256/lmSize.
+            // Real q3map2 sets lmVec0/lmVec1 = (worldUPerPixel, 0/1, 0). With
+            // consistentLmVecs=true we honour that so the auditor's planar forward check
+            // actually fires; otherwise we keep the legacy (2,0,0)/(0,2,0) values that
+            // make IsLmVecsSelfConsistent return false (skips the planar check).
+            float worldPerPixel = consistentLmVecs ? 256f / lmSize : 2f;
+            WriteVec3(surf, p, new Vector3(worldPerPixel, 0, 0)); p += 12;
+            WriteVec3(surf, p, new Vector3(0, worldPerPixel, 0)); p += 12;
             WriteVec3(surf, p, new Vector3(0, 0, 1)); p += 12;
             BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;
             BinaryPrimitives.WriteInt32LittleEndian(surf.AsSpan(p, 4), 0); p += 4;

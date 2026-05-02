@@ -56,6 +56,9 @@ namespace BspLightReSlopper
             Console.WriteLine("              [--half-lambert] [--infer-angle-model]");
             Console.WriteLine("              [--minimize-lights] [--minimize-lights-tolerance F]");
             Console.WriteLine("              [--refine-lights] [--refine-passes N] [--refine-step U]");
+            Console.WriteLine("              [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>");
+            Console.WriteLine("               [--game jk2|ja|quake3] [--refine-timeout-mins N]]");
+            Console.WriteLine("              [--no-bounce-suppress] [--no-classify] [--no-sun] [--emit-sky-shader]");
             Console.WriteLine();
             Console.WriteLine("  verify      --assets <dir> [--maps a,b,c | (default: all assets/maps/*.bsp)]");
             Console.WriteLine("              [--match-tolerance <units>] [--out <dir>]");
@@ -79,7 +82,12 @@ namespace BspLightReSlopper
             Console.WriteLine("  converge     --assets <dir> --base-path <fs_basepath> --q3map2 <exe>");
             Console.WriteLine("               [--resources <dir>] [--maps-index <jk2-sdk-maps.txt>]");
             Console.WriteLine("               [--out <dir>] [--max-maps N] [--timeout-mins N] [--game jk2]");
+            Console.WriteLine("               [--iterate N] [--iterate-step U]");
             Console.WriteLine("               SDK .map round-trip: estimate, relight, perceptual loss report.");
+            Console.WriteLine("               --iterate enables RecompileRefiner (closed-loop perceptual MSE).");
+            Console.WriteLine();
+            Console.WriteLine("  build-synthetic-map  --out <map> [--kind room|tunnel] [--size U]");
+            Console.WriteLine("                       Generates a tiny test .map for diagnostics.");
             Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine();

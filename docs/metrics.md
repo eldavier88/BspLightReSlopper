@@ -117,5 +117,30 @@ Values like **“fast: likely-on”** are **educated guesses** from BSP/lightmap
 | `bsplrs estimate` log | comparison vs entity lump when present |
 | `bsplrs converge` → `convergence.md` | perceptual MSE/RMSE after recompile, forward SSE |
 | Training CSV | recall, precision, compile-axis flags, inferred heuristics |
+| `bsplrs estimate --recompile-refine N` log | per-iteration MSE trace, best iteration |
+| `bsplrs converge --iterate N` row | iterated? cell + final MSE/lights after RecompileRefiner |
+
+## RecompileRefiner (closed-loop “look the same”)
+
+The RecompileRefiner (`Metrics/RecompileRefiner.cs`, used by `converge --iterate` and `estimate --recompile-refine`) does the following per iteration:
+
+1. **Inject** the current candidate lights into the reference `.map`.
+2. **Recompile** via `q3map2` with heuristically inferred settings.
+3. **Pair** every candidate texel to its nearest reference texel in world space (robust to lightmap layout / atlas-packing differences between compiles), excluding **blown** reference texels (no useful signal).
+4. **Compute** perceptual MSE; if better than the best-so-far, snapshot.
+5. **Update** per-light **intensity** (residual ratio) and **position** (residual-weighted centroid pull); add lights for un-owned residual clusters; drop lights with empty domain.
+6. **Loop** until iteration budget exhausted or improvement plateaus.
+
+The objective is **lightmap MSE**, not entity-list match, so the “look the same” target dominates. Best-iteration snapshot is returned (not the last iteration), guarding against late-iteration regressions.
+
+## Texel-fetch audit (`TexelFetchAuditor`)
+
+A separate diagnostic runs three independent correctness checks per emitted sample:
+
+- **Atlas round-trip** — `(AtlasIndex, AtlasX, AtlasY)` re-read must match `Observed` byte-for-byte.
+- **Barycentric inversion round-trip** — the triangle whose `lmUV`-barycentric inversion produced `World` must, when forward-mapped, land at the sample’s atlas-pixel centre within tolerance.
+- **Planar forward cross-check** — for planar surfaces with self-consistent `lightmapVecs`, the lmVec forward map must agree with the barycentric path within ~one texel.
+
+Plus duplicate-pixel and per-surface coverage stats. Used in unit tests and on real maps via `bsplrs estimate --dump-audit` (when wired) / `RealJk2Map_AuditorReportsNoAtlasMismatches` test.
 
 If something is unclear in a log line, search this file for the capitalized term or open an issue with the exact log excerpt.

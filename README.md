@@ -68,8 +68,18 @@ bsplrs train        --source-map <src.map> --base-path <fs_basepath>
 
 bsplrs converge     --assets <dir> --base-path <fs_basepath> --q3map2 <q3map2.exe>
                     [--resources <dir>] [--maps-index jk2-sdk-maps.txt] [--out <dir>]
+                    [--iterate N] [--iterate-step U]
                     Estimate from each reference BSP, inject lights into SDK .maps,
                     recompile with inferred settings, write convergence.md (perceptual loss).
+                    With --iterate, runs RecompileRefiner: closed-loop intensity/position
+                    nudges minimising perceptual MSE across N recompiles per map (the
+                    "match the look" optimisation; keeps best iteration's lights).
+
+bsplrs estimate ... [--minimize-lights] [--refine-lights]
+                    [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>]
+                    Single-map variant of the converge loop: minimise light count
+                    (L0 greedy with SSE budget), photometric refine, and optionally
+                    do N actual q3map2 recompiles to converge on the reference look.
 
 bsplrs dump-samples / build-synthetic-map — see bsplrs help
 ```
