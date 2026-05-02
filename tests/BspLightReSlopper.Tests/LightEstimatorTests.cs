@@ -122,6 +122,11 @@ namespace BspLightReSlopper.Tests
                     RandomSeed = 7,
                     UniformFillerCount = 100,
                     Parallel = false,
+                    // Synthetic 32x32 grid spans only ~256u; the envelope-discard pass
+                    // would mistake the test's lights for spurious overfits because their
+                    // intensity-implied envelope is small relative to the wide test sample
+                    // set. Disable the discard for synthetic-scene tests.
+                    PhysicalEnvelopeDiscard = false,
                 });
 
             Assert.True(result.Lights.Count >= 2,

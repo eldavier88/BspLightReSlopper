@@ -169,6 +169,35 @@ namespace BspLightReSlopper.Estimation
             /// brightness; tuned conservatively so the LSQ still has the final say.</summary>
             public float TriangulationSeedBoost { get; init; } = 1.25f;
 
+            /// <summary>If true (default), run the post-pass physical-envelope discard:
+            /// any accepted light whose claimed intensity can't physically reach its
+            /// most-distant supporting sample (per the q3map2 -fast envelope formula
+            /// `d_max = sqrt(I / falloffTolerance)`) is discarded as a spurious LSQ overfit.
+            /// Mirrors light_ydnar.cpp:3421. Tuned permissively (multiplier 2.0) so it only
+            /// catches egregious cases; tightens further when E7's CompileSettingsInferer
+            /// detects that -fast was actually used.</summary>
+            public bool PhysicalEnvelopeDiscard { get; init; } = true;
+
+            /// <summary>Envelope-derived "max distance squared" coefficient: a light of
+            /// internal intensity I can reach distance d_max where d_max² = I × EnvelopeScale.
+            /// Default 250 (= 1 / 0.004 = 1 / threshold-in-normalised-luma) corresponds to
+            /// the q3map2 inverse-square cull threshold of 1/255 lightmap units.</summary>
+            public float EnvelopeScale { get; init; } = 250f;
+
+            /// <summary>A sample counts as "supporting" for envelope-discard purposes when
+            /// the light's predicted contribution is at least this fraction of the observed
+            /// brightness. Matches the per-light SupportingFraction by default so the
+            /// discard pass is consistent with the per-light "supporting texel" semantics.</summary>
+            public float EnvelopeSupportingFraction { get; init; } = 0.10f;
+
+            /// <summary>Discard threshold multiplier on the physical envelope. A light whose
+            /// max-supporting-distance exceeds <c>EnvelopeMultiplier × envelope</c> is
+            /// dropped. 4.0 = very lenient (only egregious cases); 2.0 = catches obvious
+            /// bounce-fits; 1.0 = strict (typical -fast behaviour). We default to 4.0 because
+            /// without a confirmed -fast detection (Phase E7) we shouldn't aggressively
+            /// trust the envelope as a hard limit.</summary>
+            public float EnvelopeMultiplier { get; init; } = 4.0f;
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -614,6 +643,64 @@ namespace BspLightReSlopper.Estimation
                     int afterCull = lights.Count;
                     if (afterCull < beforeCull)
                         log?.Info($"  weak-cull: dropped {beforeCull - afterCull} lights below I={floor:F1} ({options.WeakLightCullFraction:P0} of median)");
+                }
+            }
+
+            // ---- 9. Phase E4 -- physical-envelope discard pass ----
+            // For each accepted light, compute the maximum distance at which it actually
+            // contributes brightness above the falloff threshold. Then check the farthest
+            // sample whose predicted contribution is non-negligible (a "supporting" sample
+            // in the loose sense). If the supporting span exceeds the physical envelope by
+            // more than EnvelopeMultiplier, the light's claimed intensity can't physically
+            // explain those distant samples; the LSQ overfit and the light is spurious.
+            //
+            // q3map2 reference (light_ydnar.cpp:3421): envelope = sqrt(intensity / falloffTolerance)
+            // for inverse-square. With our internal intensity scale (~q3 light * 100) and
+            // a normalised brightness threshold of 0.004 (= 1/255), the formula is
+            // d_max = sqrt(I / 0.004) approximately. We use the (already-cap-friendly)
+            // expression d_max = sqrt(I * EnvelopeScale) where EnvelopeScale folds the
+            // threshold into a single tunable.
+            if (options.PhysicalEnvelopeDiscard && lights.Count > 0)
+            {
+                var keep = new List<EstimatedLight>(lights.Count);
+                int dropped = 0;
+                foreach (var l in lights)
+                {
+                    if (l.BlownOut) { keep.Add(l); continue; } // blown-light seeds bypass
+                    float I = l.Intensity;
+                    if (I < 1f) { keep.Add(l); continue; } // weak lights handled by cull
+                    float envelope2 = I * options.EnvelopeScale - fade2;
+                    if (envelope2 <= 0) { keep.Add(l); continue; } // intensity so low envelope is degenerate
+                    float envelope = MathF.Sqrt(envelope2);
+                    float maxSupportDist2 = 0;
+                    for (int i = 0; i < n; i++)
+                    {
+                        float dxv = l.Origin.X - px[i], dyv = l.Origin.Y - py[i], dzv = l.Origin.Z - pz[i];
+                        float d2 = dxv * dxv + dyv * dyv + dzv * dzv;
+                        if (d2 < 1e-3f) continue;
+                        float invD = 1f / MathF.Sqrt(d2);
+                        float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
+                        float angle = AngleAttenuation(ndotL, options.HalfLambert);
+                        if (angle <= 0) continue;
+                        float g = angle / (d2 + fade2);
+                        float predict = (l.Color.X + l.Color.Y + l.Color.Z) * I * g / 3f;
+                        float observed = (samples[i].Observed.X + samples[i].Observed.Y + samples[i].Observed.Z) / 3f;
+                        if (observed < 1e-4f) continue;
+                        if (predict / observed >= options.EnvelopeSupportingFraction && d2 > maxSupportDist2)
+                            maxSupportDist2 = d2;
+                    }
+                    float maxSupport = MathF.Sqrt(maxSupportDist2);
+                    if (maxSupport > envelope * options.EnvelopeMultiplier)
+                    {
+                        dropped++;
+                        continue;
+                    }
+                    keep.Add(l);
+                }
+                if (dropped > 0)
+                {
+                    log?.Info($"  envelope-discard: dropped {dropped} light(s) whose support span exceeded {options.EnvelopeMultiplier:F1}x physical envelope");
+                    lights = keep;
                 }
             }
 
