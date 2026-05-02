@@ -119,48 +119,176 @@ if (Test-Path (Join-Path $q3src ".git")) {
 }
 
 # ---------------------------------------------------------------------------
-# 4. JK2 SDK (example .map files for Phase B)
+# 4 + 5. JK2 / JK2EditingTools / JK2EditingTools2 SDKs
 # ---------------------------------------------------------------------------
-$jk2sdk = Join-Path $ResourcesRoot "jk2-sdk"
-Write-Step "Jedi Outcast SDK -> $jk2sdk"
-$jk2sdkUrls = @(
-    "https://jkhub.org/files/file/3552-jedi-outcast-sdk/"
-    "https://jkhub.org/files/file/3551-jk2-sdk/"
-)
+# The Raven Software JK2 editing tools shipped as InstallShield/Inno-style
+# installers (April 2002 + a later v2 release). To keep everything in the
+# resources tree (no Program Files writes, no Start Menu entries) we prefer
+# 7-Zip extraction (modern 7z handles Inno installers natively); silent
+# install with /DIR is the fallback when 7z isn't available.
 function Has-MapFiles($dir) {
     if (-not (Test-Path $dir)) { return $false }
     return (Get-ChildItem -Path $dir -Recurse -Filter "*.map" -ErrorAction SilentlyContinue | Select-Object -First 1) -ne $null
 }
-if (Has-MapFiles $jk2sdk) {
-    Write-Skip "*.map files already present"
-} elseif ($SkipNetwork) {
-    Write-Skip "-SkipNetwork: not downloading"
-} else {
-    Write-Warn2 "automated download of the Raven JK2 SDK is unreliable; mirrors below typically need a browser."
-    foreach ($u in $jk2sdkUrls) { Write-Host "      $u" }
-    Write-Warn2 "if you have the SDK zip, drop it next to this folder and re-extract manually,"
-    Write-Warn2 "or place the .map files into $jk2sdk\maps\."
-    if (-not (Test-Path $jk2sdk)) { New-Item -ItemType Directory -Path $jk2sdk | Out-Null }
+
+function Install-JKEditingTool {
+    param(
+        [Parameter(Mandatory)] [string] $InstallerPath,
+        [Parameter(Mandatory)] [string] $DestDir
+    )
+    if (-not (Test-Path $InstallerPath)) {
+        return @{ Installed = $false; Reason = "installer not found: $InstallerPath" }
+    }
+    if (-not (Test-Path $DestDir)) {
+        New-Item -ItemType Directory -Path $DestDir -Force | Out-Null
+    }
+    if (Has-MapFiles $DestDir) {
+        return @{ Installed = $true; Reason = "already populated" }
+    }
+
+    # Method 1 (preferred for the Raven JK2 SDK installers): treat the EXE as
+    # an EXE-prefixed ZIP. The JK2EditingTools(.2).exe binaries are WinZip
+    # self-extractors (PE marker '_winzip_' in their data section), and .NET's
+    # ZipFile.OpenRead happily reads the ZIP central directory at the end of
+    # the file. No external tooling, no Program Files writes, no Start Menu.
+    try {
+        Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+        $z = [System.IO.Compression.ZipFile]::OpenRead($InstallerPath)
+        try {
+            $count = 0
+            foreach ($e in $z.Entries) {
+                if ([string]::IsNullOrEmpty($e.Name)) { continue } # directory entry
+                $rel = $e.FullName -replace '/', '\'
+                $dst = Join-Path $DestDir $rel
+                $dstDir = Split-Path -Parent $dst
+                if ($dstDir -and -not (Test-Path $dstDir)) { New-Item -ItemType Directory -Path $dstDir -Force | Out-Null }
+                [System.IO.Compression.ZipFileExtensions]::ExtractToFile($e, $dst, $true)
+                $count++
+            }
+            Write-Host "    method: ZipFile.ExtractToFile -> $count entries"
+        } finally { $z.Dispose() }
+        if (Has-MapFiles $DestDir) {
+            return @{ Installed = $true; Reason = "ZIP-embedded SFX extracted" }
+        }
+    } catch {
+        Write-Host "      ZipFile.OpenRead failed: $($_.Exception.Message)"
+    }
+
+    # Method 2: 7z extraction (handles Inno / InstallShield / NSIS too).
+    $sz = $null
+    $candidates7z = @()
+    $cmd = Get-Command "7z.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { $candidates7z += $cmd.Source }
+    $cmd = Get-Command "7z" -ErrorAction SilentlyContinue
+    if ($cmd) { $candidates7z += $cmd.Source }
+    $candidates7z += @("C:\Program Files\7-Zip\7z.exe", "C:\Program Files (x86)\7-Zip\7z.exe")
+    foreach ($p in $candidates7z) {
+        if ($p -and (Test-Path $p)) { $sz = $p; break }
+    }
+    if ($sz) {
+        Write-Host "    method: 7z extraction via $sz"
+        & $sz x -y "-o$DestDir" $InstallerPath 2>&1 | Out-Null
+        if (Has-MapFiles $DestDir) {
+            return @{ Installed = $true; Reason = "7z extracted" }
+        }
+    }
+
+    # Method 3 (fallback): silent install with /DIR (Inno / NSIS). Last resort
+    # because some installers ignore /DIR and silently write to Program Files.
+    Write-Host "    method: silent install (Inno/NSIS) - last resort"
+    $argSets = @(
+        @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOCANCEL", "/SP-", "/NOICONS", "/DIR=$DestDir"),
+        @("/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$DestDir"),
+        @("/S", "/D=$DestDir"),
+        @("-y", "-o$DestDir")
+    )
+    foreach ($a in $argSets) {
+        Write-Host "      try: $($a -join ' ')"
+        try {
+            Start-Process -FilePath $InstallerPath -ArgumentList $a -Wait -ErrorAction Stop -WindowStyle Hidden | Out-Null
+            Start-Sleep -Seconds 1
+        } catch { continue }
+        if (Has-MapFiles $DestDir) {
+            return @{ Installed = $true; Reason = "silent install: $($a[0])" }
+        }
+    }
+
+    return @{ Installed = $false; Reason = "no extraction method succeeded; manually drop .map files into $DestDir" }
 }
 
-# ---------------------------------------------------------------------------
-# 5. JKA SDK (example .map files for Phase B)
-# ---------------------------------------------------------------------------
+function Find-Installer {
+    param([string[]] $Candidates)
+    foreach ($c in $Candidates) {
+        if ($c -and (Test-Path $c)) { return $c }
+    }
+    return $null
+}
+
+# JK2EditingTools (the original April 2002 SDK) -> jk2-sdk/
+$jk2sdk = Join-Path $ResourcesRoot "jk2-sdk"
+Write-Step "Jedi Outcast SDK (JK2EditingTools.exe) -> $jk2sdk"
+if (Has-MapFiles $jk2sdk) {
+    Write-Skip "*.map files already present"
+} else {
+    $jk2Inst = Find-Installer @(
+        (Join-Path $ResourcesRoot "JK2EditingTools\JK2EditingTools.exe"),
+        (Join-Path $ResourcesRoot "JK2EditingTools.exe"),
+        "C:\Users\david\Downloads\JK2EditingTools\JK2EditingTools.exe"
+    )
+    if ($jk2Inst) {
+        $r = Install-JKEditingTool -InstallerPath $jk2Inst -DestDir $jk2sdk
+        if ($r.Installed) { Write-Ok "extracted ($($r.Reason))" }
+        else { Write-Warn2 "$($r.Reason)" }
+    } else {
+        Write-Warn2 "JK2EditingTools.exe not found in any standard location"
+    }
+}
+
+# JK2EditingTools2 (the v2 SDK update, includes more example .map files) -> jka-sdk/
 $jkasdk = Join-Path $ResourcesRoot "jka-sdk"
-Write-Step "Jedi Academy SDK -> $jkasdk"
-$jkasdkUrls = @(
-    "https://jkhub.org/files/file/2118-jedi-academy-sdk/"
-)
+Write-Step "JK2 SDK v2 (JK2EditingTools2.exe) -> $jkasdk"
 if (Has-MapFiles $jkasdk) {
     Write-Skip "*.map files already present"
-} elseif ($SkipNetwork) {
-    Write-Skip "-SkipNetwork: not downloading"
 } else {
-    Write-Warn2 "automated download of the Raven JKA SDK is unreliable; mirrors below typically need a browser."
-    foreach ($u in $jkasdkUrls) { Write-Host "      $u" }
-    Write-Warn2 "if you have the SDK zip, drop it next to this folder and re-extract manually,"
-    Write-Warn2 "or place the .map files into $jkasdk\maps\."
-    if (-not (Test-Path $jkasdk)) { New-Item -ItemType Directory -Path $jkasdk | Out-Null }
+    $jkaInst = Find-Installer @(
+        (Join-Path $ResourcesRoot "JK2EditingTools2\JK2EditingTools2.exe"),
+        (Join-Path $ResourcesRoot "JK2EditingTools2.exe"),
+        "C:\Users\david\Downloads\JK2EditingTools2\JK2EditingTools2.exe"
+    )
+    if ($jkaInst) {
+        $r = Install-JKEditingTool -InstallerPath $jkaInst -DestDir $jkasdk
+        if ($r.Installed) { Write-Ok "extracted ($($r.Reason))" }
+        else { Write-Warn2 "$($r.Reason)" }
+    } else {
+        Write-Warn2 "JK2EditingTools2.exe not found in any standard location"
+    }
+}
+
+# Index every extracted full-level .map file into a single text file the
+# training driver reads. We deliberately exclude /prefabs/ subdirectories;
+# those are single-object building blocks (lamps, crates, tie fighters, ...)
+# that don't contain their own room geometry and aren't useful to the
+# scatter+recompile loop.
+$mapsIndex = Join-Path $ResourcesRoot "jk2-sdk-maps.txt"
+$allMaps = New-Object System.Collections.Generic.List[string]
+$prefabCount = 0
+foreach ($d in @($jk2sdk, $jkasdk)) {
+    if (Test-Path $d) {
+        Get-ChildItem -Path $d -Recurse -Filter "*.map" -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.FullName -match '\\prefabs\\') {
+                $prefabCount++
+            } else {
+                $allMaps.Add($_.FullName)
+            }
+        }
+    }
+}
+if ($allMaps.Count -gt 0) {
+    Set-Content -Path $mapsIndex -Value $allMaps -Encoding utf8
+    Write-Ok "indexed $($allMaps.Count) full-level .map file(s) into $mapsIndex (skipped $prefabCount prefab file(s))"
+} else {
+    if (Test-Path $mapsIndex) { Remove-Item $mapsIndex }
+    Write-Warn2 "no full-level .map files in either SDK; jk2-sdk-maps.txt not written"
 }
 
 # ---------------------------------------------------------------------------
