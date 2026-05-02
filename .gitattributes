@@ -1,0 +1,17 @@
+* text=auto eol=lf
+*.sln text eol=crlf
+*.csproj text eol=crlf
+*.cs text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.map text eol=lf
+*.ent text eol=lf
+*.shader text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bsp binary
+*.pk3 binary
+*.tga binary
+*.jpg binary
+*.png binary

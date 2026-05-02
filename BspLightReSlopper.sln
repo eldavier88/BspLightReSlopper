@@ -1,0 +1,56 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 16
+VisualStudioVersion = 16.0.30114.105
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{CECFF77E-92AD-4CF4-9614-82E35134CD48}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BspLightReSlopper", "src\BspLightReSlopper\BspLightReSlopper.csproj", "{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{A2E41025-4027-415A-8480-E232ECC08FD9}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "BspLightReSlopper.Tests", "tests\BspLightReSlopper.Tests\BspLightReSlopper.Tests.csproj", "{2E027605-7B95-4093-AE8E-5E59C10E368B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Debug|x64 = Debug|x64
+		Debug|x86 = Debug|x86
+		Release|Any CPU = Release|Any CPU
+		Release|x64 = Release|x64
+		Release|x86 = Release|x86
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|x64.Build.0 = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Debug|x86.Build.0 = Debug|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|x64.ActiveCfg = Release|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|x64.Build.0 = Release|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|x86.ActiveCfg = Release|Any CPU
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3}.Release|x86.Build.0 = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|x64.Build.0 = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Debug|x86.Build.0 = Debug|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|x64.ActiveCfg = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|x64.Build.0 = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|x86.ActiveCfg = Release|Any CPU
+		{2E027605-7B95-4093-AE8E-5E59C10E368B}.Release|x86.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{B2F880DC-0ACF-4C1F-B537-86AD8F72A0C3} = {CECFF77E-92AD-4CF4-9614-82E35134CD48}
+		{2E027605-7B95-4093-AE8E-5E59C10E368B} = {A2E41025-4027-415A-8480-E232ECC08FD9}
+	EndGlobalSection
+EndGlobal
