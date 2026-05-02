@@ -26,6 +26,7 @@ namespace BspLightReSlopper.Surfaces
             public IReadOnlyList<List<SurfaceTriangle>?> PerSurface { get; init; } = Array.Empty<List<SurfaceTriangle>?>();
             public int Planar { get; init; }
             public int TriangleSoup { get; init; }
+            public int PatchTessellated { get; init; }
             public int PatchSkipped { get; init; }
             public int FlareSkipped { get; init; }
             public int SkySkipped { get; init; }
@@ -35,11 +36,25 @@ namespace BspLightReSlopper.Surfaces
             public int TrianglesEmitted { get; init; }
         }
 
-        public static UnpackResult Unpack(BspFile bsp)
+        public sealed class UnpackOptions
         {
+            /// <summary>Tessellate <c>patchDef2</c> surfaces into triangles. JK2 maps lean
+            /// heavily on patches for organic geometry (curved walls, pillars, ramps); the
+            /// estimator gets a meaningful coverage boost from including their lightmap
+            /// texels even though our subdivision is uniform rather than curvature-adaptive.</summary>
+            public bool TessellatePatches { get; init; } = true;
+
+            /// <summary>Sub-patch subdivision level. 4 = 5×5 grid = 32 triangles per 3×3
+            /// sub-patch, well above the typical JK2 patch lightmap texel density.</summary>
+            public int PatchLevel { get; init; } = PatchTessellator.DefaultLevel;
+        }
+
+        public static UnpackResult Unpack(BspFile bsp, UnpackOptions? options = null)
+        {
+            options ??= new UnpackOptions();
             int n = bsp.Surfaces.Count;
             var per = new List<SurfaceTriangle>?[n];
-            int planar = 0, soup = 0, patch = 0, flare = 0, sky = 0, nodraw = 0, nolm = 0, other = 0, tris = 0;
+            int planar = 0, soup = 0, patch = 0, patchTess = 0, flare = 0, sky = 0, nodraw = 0, nolm = 0, other = 0, tris = 0;
 
             for (int si = 0; si < n; si++)
             {
@@ -65,8 +80,26 @@ namespace BspLightReSlopper.Surfaces
                         break;
 
                     case BspSurfaceType.Patch:
-                        patch++;
-                        per[si] = null;
+                        if (options.TessellatePatches)
+                        {
+                            var ptris = PatchTessellator.TessellatePatch(bsp, s, si, options.PatchLevel);
+                            if (ptris != null && ptris.Count > 0)
+                            {
+                                per[si] = ptris;
+                                tris += ptris.Count;
+                                patchTess++;
+                            }
+                            else
+                            {
+                                patch++;
+                                per[si] = null;
+                            }
+                        }
+                        else
+                        {
+                            patch++;
+                            per[si] = null;
+                        }
                         break;
 
                     case BspSurfaceType.Flare:
@@ -86,6 +119,7 @@ namespace BspLightReSlopper.Surfaces
                 PerSurface = per,
                 Planar = planar,
                 TriangleSoup = soup,
+                PatchTessellated = patchTess,
                 PatchSkipped = patch,
                 FlareSkipped = flare,
                 SkySkipped = sky,

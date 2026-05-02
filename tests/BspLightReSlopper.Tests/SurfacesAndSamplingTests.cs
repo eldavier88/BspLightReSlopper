@@ -69,5 +69,48 @@ namespace BspLightReSlopper.Tests
             float outsideRatio = samples.OutOfTriangleSamples / (float)Math.Max(1, samples.LitTexelsConsidered);
             Assert.True(outsideRatio < 0.6f, $"{outsideRatio:P1} of texels fell outside any triangle (expected <60%)");
         }
+
+        [SkippableFact]
+        public void PatchTessellator_CurvedJk2PatchProducesValidTriangles()
+        {
+            string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+            Skip.IfNot(!string.IsNullOrEmpty(assets) && File.Exists(Path.Combine(assets!, "maps", "kejim_post.bsp")),
+                "BSPLRS_JK2_ASSETS not set or kejim_post.bsp missing");
+
+            var bsp = BspLoader.Load(Path.Combine(assets!, "maps", "kejim_post.bsp"));
+            var unpacked = SurfaceUnpacker.Unpack(bsp);
+            // kejim_post has ~1000 patch surfaces; with patch tessellation enabled we should
+            // emit >0 of them as triangles, and the per-triangle normals must be unit length.
+            Assert.True(unpacked.PatchTessellated > 100, $"only tessellated {unpacked.PatchTessellated} patches");
+            int patchTriCount = 0;
+            int badNormals = 0;
+            for (int si = 0; si < bsp.Surfaces.Count; si++)
+            {
+                if (bsp.Surfaces[si].SurfaceType != BspSurfaceType.Patch) continue;
+                var tris = unpacked.PerSurface[si];
+                if (tris == null) continue;
+                patchTriCount += tris.Count;
+                foreach (var t in tris)
+                {
+                    float lenSq = t.Normal.LengthSquared();
+                    if (lenSq < 0.95f || lenSq > 1.05f) badNormals++;
+                }
+            }
+            Assert.True(patchTriCount > 1000, $"only {patchTriCount} patch triangles emitted");
+            Assert.Equal(0, badNormals);
+        }
+
+        [SkippableFact]
+        public void PatchTessellator_CanBeDisabled()
+        {
+            string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+            Skip.IfNot(!string.IsNullOrEmpty(assets) && File.Exists(Path.Combine(assets!, "maps", "kejim_post.bsp")),
+                "BSPLRS_JK2_ASSETS not set or kejim_post.bsp missing");
+
+            var bsp = BspLoader.Load(Path.Combine(assets!, "maps", "kejim_post.bsp"));
+            var off = SurfaceUnpacker.Unpack(bsp, new SurfaceUnpacker.UnpackOptions { TessellatePatches = false });
+            Assert.Equal(0, off.PatchTessellated);
+            Assert.True(off.PatchSkipped > 0);
+        }
     }
 }

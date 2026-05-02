@@ -52,7 +52,7 @@ namespace BspLightReSlopper.Cli
             // ----- Surface unpack -----
             log.Section("surface unpack");
             var unpacked = SurfaceUnpacker.Unpack(bsp);
-            log.Info($"planar={unpacked.Planar} triSoup={unpacked.TriangleSoup} patch(skipped)={unpacked.PatchSkipped} sky(skipped)={unpacked.SkySkipped} noDraw={unpacked.NoDrawSkipped} noLightmap={unpacked.NoLightmapSkipped} other={unpacked.OtherSkipped}");
+            log.Info($"planar={unpacked.Planar} triSoup={unpacked.TriangleSoup} patch(tess)={unpacked.PatchTessellated} patch(skipped)={unpacked.PatchSkipped} sky(skipped)={unpacked.SkySkipped} noDraw={unpacked.NoDrawSkipped} noLightmap={unpacked.NoLightmapSkipped} other={unpacked.OtherSkipped}");
             log.Info($"triangles emitted: {unpacked.TrianglesEmitted}");
 
             // ----- Build collision + PVS for visibility-aware estimation -----
