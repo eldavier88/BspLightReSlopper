@@ -86,11 +86,13 @@ namespace BspLightReSlopper.Estimation
 
             /// <summary>Stop early if a round explains less than this fraction of the
             /// remaining residual energy. Tuned low for real maps where individual lights
-            /// often only contribute a tiny slice of the global budget.</summary>
-            public float MinExplainedFractionPerRound { get; init; } = 0.0005f;
+            /// often only contribute a tiny slice of the global budget; on dense-lighting
+            /// maps (doom_shields has 926 lights), a smaller per-round share is normal and
+            /// stopping at 0.05% strands ~half the lights, so we go finer.</summary>
+            public float MinExplainedFractionPerRound { get; init; } = 0.0001f;
 
             /// <summary>How many consecutive rejected rounds before stopping.</summary>
-            public int MaxConsecutiveRejects { get; init; } = 6;
+            public int MaxConsecutiveRejects { get; init; } = 8;
 
             /// <summary>Local-neighborhood radius around a candidate L when computing the
             /// per-channel LSQ fit and the SSE score. Samples beyond this radius are ignored
