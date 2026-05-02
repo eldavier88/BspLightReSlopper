@@ -78,6 +78,11 @@ namespace BspLightReSlopper.Tools
             /// intact in the compiled BSP. Required by the training pipeline so we can read
             /// back ground truth from the recompiled BSP.</summary>
             public bool KeepLights { get; init; }            // -keeplights
+            /// <summary>If true, pass <c>-lightanglehl 1</c> to enable q3map2's half-Lambert
+            /// angle attenuation (a "jal" addition; default off in JK2/JKA game profiles but
+            /// available as an explicit flag). Used by the training matrix to give the
+            /// estimator data baked under both Lambert and half-Lambert regimes.</summary>
+            public bool LightAngleHl { get; init; }          // -lightanglehl 1
             public float? BounceColorRatio { get; init; }    // -bouncecolorratio F
             public float? BounceScale { get; init; }         // -bouncescale F
             public float? AreaScale { get; init; }           // -areascale F
@@ -101,6 +106,7 @@ namespace BspLightReSlopper.Tools
                     if (Deluxe) sb.Append(" deluxe");
                     if (Cheap) sb.Append(" cheap");
                     if (CheapGrid) sb.Append(" cheapgrid");
+                    if (LightAngleHl) sb.Append(" lightanglehl");
                     if (BounceOnly) sb.Append(" bounceonly");
                     if (BounceGrid) sb.Append(" bouncegrid");
                     if (BounceColorRatio.HasValue) sb.Append($" bcr={BounceColorRatio:0.##}");
@@ -212,6 +218,7 @@ namespace BspLightReSlopper.Tools
                 if (settings.Deluxe) args.Add("-deluxe");
                 if (settings.CheapGrid) args.Add("-cheapgrid");
                 if (settings.Cheap) args.Add("-cheap");
+                if (settings.LightAngleHl) { args.Add("-lightanglehl"); args.Add("1"); }
                 if (settings.BounceOnly) args.Add("-bounceonly");
                 if (settings.BounceGrid) args.Add("-bouncegrid");
                 // KeepLights goes on the -bsp stage (see comment there). It's redundant on
@@ -333,7 +340,23 @@ namespace BspLightReSlopper.Tools
                 KeepLights = true, // training pipeline always needs ground truth back
 
                 Filter = rng.NextDouble() < 0.5,
-                FastLight = rng.NextDouble() < 0.25,
+                // FastLight bumped 25% -> 50% so the matrix really exercises both regimes
+                // (the photometric envelope changes shape under -fast and the estimator needs
+                // to see plenty of both kinds in training). See Phase D3 / E4 / E7.
+                FastLight = rng.NextDouble() < 0.50,
+                // -lightanglehl 1 enables the q3map2 half-Lambert curve (jal addition,
+                // post-2002). Drawn with low probability so the dataset stays
+                // dominated by the standard-Lambert regime that JK2/JKA actually shipped,
+                // but the estimator gets non-zero exposure so the half-Lambert code path
+                // (LightEstimator.Options.HalfLambert) is regression-tested in real training.
+                LightAngleHl = rng.NextDouble() < 0.15,
+                // -cheap aborts vertex light calc once a luxel saturates; speeds compile,
+                // mildly distorts the lightmap. -cheapgrid is its grid-only sibling.
+                Cheap = rng.NextDouble() < 0.10,
+                CheapGrid = rng.NextDouble() < 0.15,
+                // -deluxe writes deluxemap data; harmless to our estimator, exercises a
+                // different q3map2 code path that occasionally affects lightmap layout.
+                Deluxe = rng.NextDouble() < 0.15,
                 BounceColorRatio = (float)rng.NextDouble(),
                 BounceScale = bounce > 0 ? (float?)(0.5 + rng.NextDouble() * 1.5) : null,
                 AreaScale = (float)(0.75 + rng.NextDouble() * 0.5),

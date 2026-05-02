@@ -50,6 +50,10 @@ namespace BspLightReSlopper.Tools
             public int EstimatorMaxLights { get; init; } = 80;
             public int EstimatorPivots { get; init; } = 800;
             public bool KeepRoundArtifacts { get; init; } = true;
+            /// <summary>If true, the per-round scatterer also stamps a random
+            /// <c>_lightmapscale</c> from {0.5, 1, 2, 4} into worldspawn so the matrix
+            /// covers multiple lightmap densities. Default true for the converge command.</summary>
+            public bool RandomiseLightmapScale { get; init; } = true;
         }
 
         public sealed class RoundResult
@@ -69,6 +73,9 @@ namespace BspLightReSlopper.Tools
             public TimeSpan CompileElapsed { get; init; }
             public TimeSpan EstimateElapsed { get; init; }
             public Dictionary<string, string> InferredCompile { get; init; } = new();
+            /// <summary>The actual <c>_lightmapscale</c> stamped onto worldspawn for this
+            /// round (NaN if not stamped). Echoed by <see cref="RandomLightScatterer.Result"/>.</summary>
+            public float WorldspawnLightmapScale { get; init; } = float.NaN;
         }
 
         public sealed class Result
@@ -100,7 +107,8 @@ namespace BspLightReSlopper.Tools
             csv.NewLine = "\n";
             csv.WriteLine("round,seed,truth,est,matched,recall,precision,posErrMedian,colorErrMean," +
                           "compileSecs,estimateSecs,bounce,sampleSize,gamma,compensate,brightness," +
-                          "fast,filter,deluxe,inferGamma,inferOverbright,inferLightmapScale,inferSamplesize");
+                          "fast,filter,deluxe,cheap,cheapGrid,lightAngleHl,lightmapScale," +
+                          "inferGamma,inferOverbright,inferLightmapScale,inferSamplesize");
 
             var rounds = new List<RoundResult>();
             int succeeded = 0;
@@ -154,9 +162,11 @@ namespace BspLightReSlopper.Tools
                 {
                     LightCount = o.LightsPerRound,
                     RandomSeed = seed,
+                    RandomiseLightmapScale = o.RandomiseLightmapScale,
                 });
                 MapFileWriter.Write(scatterMap, map);
-                log.Info($"scatter: placed {scatterResult.Placed}/{o.LightsPerRound} (rejects: solid={scatterResult.RejectedSolid} outside={scatterResult.RejectedOutside} clearance={scatterResult.RejectedClearance})");
+                log.Info($"scatter: placed {scatterResult.Placed}/{o.LightsPerRound} (rejects: solid={scatterResult.RejectedSolid} outside={scatterResult.RejectedOutside} clearance={scatterResult.RejectedClearance})" +
+                         (float.IsNaN(scatterResult.WorldspawnLightmapScale) ? "" : $" lmScale={scatterResult.WorldspawnLightmapScale:0.###}"));
 
                 // ---- 3. Recompile with random settings ----
                 var settings = matrix.Sample(new Random(seed));
@@ -244,6 +254,7 @@ namespace BspLightReSlopper.Tools
                     CompileElapsed = compileSw.Elapsed,
                     EstimateElapsed = estSw.Elapsed,
                     InferredCompile = new Dictionary<string, string>(infer.Display),
+                    WorldspawnLightmapScale = scatterResult.WorldspawnLightmapScale,
                 };
                 rounds.Add(rr);
                 AppendCsvRow(csv, rr);
@@ -329,6 +340,10 @@ namespace BspLightReSlopper.Tools
                 r.Settings.FastLight ? "1" : "0",
                 r.Settings.Filter ? "1" : "0",
                 r.Settings.Deluxe ? "1" : "0",
+                r.Settings.Cheap ? "1" : "0",
+                r.Settings.CheapGrid ? "1" : "0",
+                r.Settings.LightAngleHl ? "1" : "0",
+                float.IsNaN(r.WorldspawnLightmapScale) ? "" : r.WorldspawnLightmapScale.ToString("0.###", inv),
                 Csv(r.InferredCompile, "gamma"),
                 Csv(r.InferredCompile, "overbrightBits"),
                 Csv(r.InferredCompile, "lightmapScale"),
