@@ -93,6 +93,69 @@ namespace BspLightReSlopper.Tests
         }
 
         [Fact]
+        public void StampsExplicitLightmapScale()
+        {
+            string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+            Skip.IfNot(!string.IsNullOrEmpty(assets) && File.Exists(Path.Combine(assets!, "maps", "kejim_post.bsp")),
+                "BSPLRS_JK2_ASSETS / kejim_post.bsp not present");
+
+            var bsp = BspLoader.Load(Path.Combine(assets!, "maps", "kejim_post.bsp"));
+            var col = new BspCollision(bsp);
+            var map = MapFileParser.Parse(SyntheticMap);
+            var r = RandomLightScatterer.Scatter(map, bsp, col, new RandomLightScatterer.Options
+            {
+                LightCount = 4,
+                RandomSeed = 1,
+                WorldspawnLightmapScale = 2.0f,
+            });
+            Assert.Equal(2.0f, r.WorldspawnLightmapScale);
+            var ws = map.Entities.First(e => e.ClassName == "worldspawn");
+            Assert.Equal("2", ws.GetKey("_lightmapscale"));
+        }
+
+        [Fact]
+        public void RandomisesLightmapScaleAcrossSeedsAndOnlyDrawsFromAllowedBuckets()
+        {
+            string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+            Skip.IfNot(!string.IsNullOrEmpty(assets) && File.Exists(Path.Combine(assets!, "maps", "kejim_post.bsp")),
+                "BSPLRS_JK2_ASSETS / kejim_post.bsp not present");
+
+            var bsp = BspLoader.Load(Path.Combine(assets!, "maps", "kejim_post.bsp"));
+            var col = new BspCollision(bsp);
+            var seen = new System.Collections.Generic.HashSet<float>();
+            for (int s = 0; s < 24; s++)
+            {
+                var map = MapFileParser.Parse(SyntheticMap);
+                var r = RandomLightScatterer.Scatter(map, bsp, col, new RandomLightScatterer.Options
+                {
+                    LightCount = 2,
+                    RandomSeed = s,
+                    RandomiseLightmapScale = true,
+                });
+                Assert.Contains(r.WorldspawnLightmapScale, new[] { 0.5f, 1f, 2f, 4f });
+                seen.Add(r.WorldspawnLightmapScale);
+            }
+            // Across 24 seeds we should hit at least 2 of the 4 buckets.
+            Assert.True(seen.Count >= 2, $"only saw scales {string.Join(',', seen)} across 24 seeds");
+        }
+
+        [Fact]
+        public void LightmapScaleNanByDefault()
+        {
+            string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+            Skip.IfNot(!string.IsNullOrEmpty(assets) && File.Exists(Path.Combine(assets!, "maps", "kejim_post.bsp")),
+                "BSPLRS_JK2_ASSETS / kejim_post.bsp not present");
+
+            var bsp = BspLoader.Load(Path.Combine(assets!, "maps", "kejim_post.bsp"));
+            var col = new BspCollision(bsp);
+            var map = MapFileParser.Parse(SyntheticMap);
+            var r = RandomLightScatterer.Scatter(map, bsp, col, new RandomLightScatterer.Options { LightCount = 2, RandomSeed = 0 });
+            Assert.True(float.IsNaN(r.WorldspawnLightmapScale));
+            var ws = map.Entities.First(e => e.ClassName == "worldspawn");
+            Assert.Null(ws.GetKey("_lightmapscale"));
+        }
+
+        [Fact]
         public void DeterministicForSameSeed()
         {
             string? assets = Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");

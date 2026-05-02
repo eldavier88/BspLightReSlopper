@@ -60,6 +60,17 @@ namespace BspLightReSlopper.Tools
             /// model[0] bounds. Useful for stress-testing a specific region.</summary>
             public Vector3? BboxMin { get; init; }
             public Vector3? BboxMax { get; init; }
+
+            /// <summary>If non-null, set the worldspawn <c>_lightmapscale</c> key to this
+            /// value (rounded to 3 decimals). q3map2 honors per-map lightmap-scale overrides
+            /// via this worldspawn key; the training matrix sweeps it to give the estimator
+            /// data spanning multiple lightmap densities. Common values in shipping JK2 maps:
+            /// 0.5, 1, 2, 4. We deliberately exclude 0.25 -- some q3map2 builds error out.</summary>
+            public float? WorldspawnLightmapScale { get; init; }
+
+            /// <summary>If true and <see cref="WorldspawnLightmapScale"/> is null, draw a
+            /// random value from {0.5, 1.0, 2.0, 4.0} per round. Default false (caller-driven).</summary>
+            public bool RandomiseLightmapScale { get; init; }
         }
 
         public sealed class Result
@@ -72,12 +83,49 @@ namespace BspLightReSlopper.Tools
             public int Spotlights { get; init; }
             public int LinearLights { get; init; }
             public int ColoredLights { get; init; }
+            /// <summary>The actual <c>_lightmapscale</c> value stamped onto worldspawn (NaN
+            /// if untouched). Echoed into the training CSV row.</summary>
+            public float WorldspawnLightmapScale { get; init; } = float.NaN;
         }
+
+        // Discrete-bucket draw for _lightmapscale. q3 fixtures span ~1/8..4 in shipping
+        // maps; 0.25 is excluded because some q3map2 builds error out on values < 0.5.
+        private static readonly float[] LightmapScaleChoices = { 0.5f, 1f, 2f, 4f };
 
         public static Result Scatter(MapFileT map, BspFile bsp, BspCollision collision, Options? options = null)
         {
             options ??= new Options();
             var rng = new Random(options.RandomSeed);
+
+            // ---- 0. Worldspawn _lightmapscale stamping ----
+            // Done first so it's deterministic from the seed regardless of how many lights
+            // get rejected later. We mutate the existing worldspawn entity rather than
+            // appending a new one (q3map2 only honors keys on entity 0).
+            float lmScale = float.NaN;
+            if (options.WorldspawnLightmapScale.HasValue)
+            {
+                lmScale = options.WorldspawnLightmapScale.Value;
+            }
+            else if (options.RandomiseLightmapScale)
+            {
+                lmScale = LightmapScaleChoices[rng.Next(LightmapScaleChoices.Length)];
+            }
+            if (!float.IsNaN(lmScale))
+            {
+                MapEntity? worldspawn = null;
+                foreach (var e in map.Entities)
+                {
+                    if (string.Equals(e.ClassName, "worldspawn", StringComparison.OrdinalIgnoreCase))
+                    { worldspawn = e; break; }
+                }
+                if (worldspawn == null)
+                {
+                    worldspawn = new MapEntity();
+                    worldspawn.SetKey("classname", "worldspawn");
+                    map.Entities.Insert(0, worldspawn);
+                }
+                worldspawn.SetKey("_lightmapscale", lmScale.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture));
+            }
 
             // ---- 1. Strip existing light + spotlight target_position entities ----
             // We also drop info_null entities used only as spot light targets so we don't
@@ -203,6 +251,7 @@ namespace BspLightReSlopper.Tools
                 Spotlights = spots,
                 LinearLights = linears,
                 ColoredLights = colored,
+                WorldspawnLightmapScale = lmScale,
             };
         }
 
