@@ -213,6 +213,11 @@ namespace BspLightReSlopper.Estimation
             public int RoundsAccepted { get; init; }
             public int RoundsRejected { get; init; }
             public float ElapsedSeconds { get; init; }
+            /// <summary>Per-sample mask (same length/order as the input <c>samples</c>). True
+            /// = this texel was detected as a blow-out (core or dilation ring) and was excluded
+            /// from the LSQ. Downstream consumers (perceptual refiner, recompile refiner)
+            /// should also skip these so they don't waste effort "fitting" a clipped pixel.</summary>
+            public bool[] BlownMask { get; init; } = Array.Empty<bool>();
         }
 
         public static Result Estimate(IReadOnlyList<TexelSample> samples, Vector3 bboxMin, Vector3 bboxMax, Options? options = null, Logger? log = null)
@@ -291,14 +296,24 @@ namespace BspLightReSlopper.Estimation
                 }
             }
 
-            // ---- Phase E2 pre-pass: geometric triangulation. Detect surface brightness
-            // peaks, intersect normal-rays from different surfaces, mean-shift cluster the
-            // meet-points. The resulting cluster centres become seed candidate positions
-            // that get added to every round's candidate pool with a score boost.
+            // ---- Phase E2 / H3 pre-pass: geometric triangulation. Detect surface
+            // brightness peaks, intersect normal-rays from different surfaces, mean-shift
+            // cluster the meet-points. The resulting cluster centres become seed candidate
+            // positions that get added to every round's candidate pool with a score boost.
+            //
+            // H3 addition: we now hand the triangulator the core-saturated mask (so
+            // saturated clipped-plateau peaks are excluded -- their "local max" is
+            // arbitrary within the plateau) and the blown cluster list (so their
+            // non-saturated boundary ring contributes extra rays that point at the
+            // real clipped-light source).
             var triangulationSeeds = new List<Vector3>();
             if (options.UseTriangulation)
             {
-                var triResult = GeometricTriangulator.Triangulate(samples, log: log);
+                var triResult = GeometricTriangulator.Triangulate(
+                    samples,
+                    log: log,
+                    coreSaturatedMask: blowResult?.CoreSaturatedMask,
+                    blownClusters: blowResult?.Clusters);
                 foreach (var seed in triResult.Seeds) triangulationSeeds.Add(seed.Position);
             }
 
@@ -716,6 +731,7 @@ namespace BspLightReSlopper.Estimation
                 RoundsAccepted = accepted,
                 RoundsRejected = rejected,
                 ElapsedSeconds = (float)sw.Elapsed.TotalSeconds,
+                BlownMask = blowResult?.BlownMask ?? new bool[n],
             };
         }
 
@@ -770,7 +786,6 @@ namespace BspLightReSlopper.Estimation
                 float confidence = 0;
                 float explained = 0;
                 bool anyBlownOut = false;
-                string method = "merged(" + members.Count + ")";
                 foreach (int idx in members)
                 {
                     var l = lights[idx];
@@ -782,6 +797,10 @@ namespace BspLightReSlopper.Estimation
                     explained = MathF.Max(explained, l.ResidualEnergyExplainedFraction);
                     if (l.BlownOut) anyBlownOut = true;
                 }
+                // Prefix with "blowout-" whenever any member originated from a blown
+                // cluster so downstream filters + tests can still identify the
+                // provenance. Otherwise fall back to "merged(N)".
+                string method = (anyBlownOut ? "blowout-merged(" : "merged(") + members.Count + ")";
                 if (intensitySum < 1e-6f)
                 {
                     // All members essentially zero-intensity; emit one centroid with summed
@@ -1080,14 +1099,17 @@ namespace BspLightReSlopper.Estimation
         }
 
         /// <summary>Sum of squared RGB errors between <see cref="TexelSample.Observed"/> and the
-        /// forward Lambert/half-Lambert prediction from the given lights (estimator photometric model).</summary>
-        public static float ForwardRgbSSE(IReadOnlyList<TexelSample> samples, IReadOnlyList<EstimatedLight> lights, bool halfLambert, float fade = 32f)
+        /// forward Lambert/half-Lambert prediction from the given lights (estimator photometric
+        /// model). Pass an <paramref name="excludeMask"/> aligned to <paramref name="samples"/>
+        /// to skip samples (typically blown/dilated texels whose observed value is garbage).</summary>
+        public static float ForwardRgbSSE(IReadOnlyList<TexelSample> samples, IReadOnlyList<EstimatedLight> lights, bool halfLambert, float fade = 32f, bool[]? excludeMask = null)
         {
             if (samples.Count == 0) return 0f;
             float fade2 = fade * fade;
             double acc = 0;
             for (int i = 0; i < samples.Count; i++)
             {
+                if (excludeMask != null && i < excludeMask.Length && excludeMask[i]) continue;
                 var s = samples[i];
                 float pr = 0, pg = 0, pb = 0;
                 for (int j = 0; j < lights.Count; j++)
@@ -1121,11 +1143,12 @@ namespace BspLightReSlopper.Estimation
             bool halfLambert,
             float fade,
             float relativeSseIncreaseTolerance,
-            Logger? log = null)
+            Logger? log = null,
+            bool[]? excludeMask = null)
         {
             if (lights.Count <= 1) return lights.ToList();
             var list = lights.ToList();
-            float sse = ForwardRgbSSE(samples, list, halfLambert, fade);
+            float sse = ForwardRgbSSE(samples, list, halfLambert, fade, excludeMask);
             if (sse < 1e-8f) return list;
 
             bool progress = true;
@@ -1148,7 +1171,7 @@ namespace BspLightReSlopper.Estimation
                 for (int i = 0; i < list.Count; i++)
                     if (i != idx) trial.Add(list[i]);
 
-                float newSse = ForwardRgbSSE(samples, trial, halfLambert, fade);
+                float newSse = ForwardRgbSSE(samples, trial, halfLambert, fade, excludeMask);
                 if ((newSse - sse) / sse <= relativeSseIncreaseTolerance)
                 {
                     log?.Info($"  minimize-lights: removed dim candidate (sse {sse:F0} -> {newSse:F0}, +{100f * (newSse - sse) / sse:F1}%)");

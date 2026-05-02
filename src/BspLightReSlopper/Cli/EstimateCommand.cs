@@ -158,6 +158,7 @@ namespace BspLightReSlopper.Cli
                         RoundsAccepted = result.RoundsAccepted,
                         RoundsRejected = result.RoundsRejected,
                         ElapsedSeconds = result.ElapsedSeconds,
+                        BlownMask = result.BlownMask,
                     };
                 }
                 catch (Exception ex)
@@ -169,7 +170,7 @@ namespace BspLightReSlopper.Cli
             if (args.Flag("minimize-lights"))
             {
                 float tol = float.TryParse(args.Get("minimize-lights-tolerance"), out float t) ? t : 0.02f;
-                var minimized = LightEstimator.MinimizeLightCountGreedy(result.Lights, samples.Samples, halfLambert, 32f, tol, log);
+                var minimized = LightEstimator.MinimizeLightCountGreedy(result.Lights, samples.Samples, halfLambert, 32f, tol, log, excludeMask: result.BlownMask);
                 result = new LightEstimator.Result
                 {
                     Lights = minimized,
@@ -179,6 +180,7 @@ namespace BspLightReSlopper.Cli
                     RoundsAccepted = result.RoundsAccepted,
                     RoundsRejected = result.RoundsRejected,
                     ElapsedSeconds = result.ElapsedSeconds,
+                    BlownMask = result.BlownMask,
                 };
             }
 
@@ -190,7 +192,7 @@ namespace BspLightReSlopper.Cli
                     StepStart = float.TryParse(args.Get("refine-step"), out float rs) ? rs : 32f,
                 };
                 log.Section("photometric refine (forward SSE)");
-                var rf = BspLightReSlopper.Metrics.PerceptualRefiner.RefineRgb(samples.Samples, result.Lights, halfLambert, 32f, rOpts);
+                var rf = BspLightReSlopper.Metrics.PerceptualRefiner.RefineRgb(samples.Samples, result.Lights, halfLambert, 32f, rOpts, excludeMask: result.BlownMask);
                 log.Info($"forward SSE: {rf.InitialSse:F1} -> {rf.FinalSse:F1}");
                 result = new LightEstimator.Result
                 {
@@ -201,7 +203,69 @@ namespace BspLightReSlopper.Cli
                     RoundsAccepted = result.RoundsAccepted,
                     RoundsRejected = result.RoundsRejected,
                     ElapsedSeconds = result.ElapsedSeconds,
+                    BlownMask = result.BlownMask,
                 };
+            }
+
+            // ----- Phase H4: optional recompile-refine loop. Requires --q3map2 and
+            // --base-path (fs_basepath) plus --map <path.map> pointing at the .map the
+            // user has authored / wants to keep brush-stable. The loop minimises perceptual
+            // MSE between reference bake and candidate bake by driving per-light
+            // intensity + position updates from per-texel residuals.
+            int recompileRefine = int.TryParse(args.Get("recompile-refine"), out int rrn) ? rrn : 0;
+            if (recompileRefine > 0)
+            {
+                string? q3map2 = args.Get("q3map2") ?? Environment.GetEnvironmentVariable("BSPLRS_Q3MAP2");
+                string? basePath = args.Get("base-path") ?? Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
+                string? mapPath = args.Get("map");
+                if (string.IsNullOrEmpty(q3map2) || string.IsNullOrEmpty(basePath) || string.IsNullOrEmpty(mapPath))
+                {
+                    log.Warn("recompile-refine: skipped (needs --q3map2, --base-path, --map). Running photometric-only refine instead.");
+                }
+                else
+                {
+                    log.Section($"recompile-refine loop ({recompileRefine} iterations)");
+                    string game = args.Get("game") ?? "jk2";
+                    var wrapper = new BspLightReSlopper.Tools.Q3Map2Wrapper(q3map2!, basePath!, fsGame: "", gameToken: game);
+                    string workRoot = Path.Combine(Path.GetDirectoryName(outPath) ?? ".", Path.GetFileNameWithoutExtension(outPath) + "_refine");
+                    var refineOpts = new BspLightReSlopper.Metrics.RecompileRefiner.Options
+                    {
+                        ReferenceMapPath = mapPath,
+                        WorkDir = workRoot,
+                        Wrapper = wrapper,
+                        CompileSettings = new BspLightReSlopper.Tools.Q3Map2Wrapper.CompileSettings
+                        {
+                            KeepLights = true,
+                            MetaSurfaces = true,
+                            Bounce = infer.BounceUsed ? 4 : (int?)null,
+                            SampleSize = Math.Clamp((int)Math.Round(infer.SampleSize), 8, 128),
+                            Gamma = infer.Gamma,
+                            Compensate = 1.5f,
+                            Brightness = 1f,
+                            FastLight = infer.FastUsed,
+                            LightAngleHl = infer.LightAngleHl,
+                            Filter = true,
+                        },
+                        PerCompileTimeout = TimeSpan.FromMinutes(int.TryParse(args.Get("refine-timeout-mins"), out int rtm) ? rtm : 10),
+                        MaxIterations = recompileRefine,
+                        InitialStep = float.TryParse(args.Get("refine-step"), out float rss) ? rss : 48f,
+                        HalfLambert = halfLambert,
+                    };
+                    var refine = BspLightReSlopper.Metrics.RecompileRefiner.Refine(
+                        samples.Samples, result.Lights, result.BlownMask, bboxMin, bboxMax, refineOpts, log);
+                    log.Info($"recompile-refine: MSE {refine.InitialMse:F6} -> {refine.FinalMse:F6} over {refine.Iterations.Count} iteration(s); best iter={refine.BestIteration}; final lights={refine.Lights.Count}");
+                    result = new LightEstimator.Result
+                    {
+                        Lights = new List<EstimatedLight>(refine.Lights),
+                        InitialEnergy = result.InitialEnergy,
+                        FinalResidualEnergy = result.FinalResidualEnergy,
+                        RoundsRun = result.RoundsRun,
+                        RoundsAccepted = result.RoundsAccepted,
+                        RoundsRejected = result.RoundsRejected,
+                        ElapsedSeconds = result.ElapsedSeconds,
+                        BlownMask = result.BlownMask,
+                    };
+                }
             }
 
             // ----- Write .ent -----

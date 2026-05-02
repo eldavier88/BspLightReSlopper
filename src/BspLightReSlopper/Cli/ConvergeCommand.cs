@@ -23,6 +23,10 @@ namespace BspLightReSlopper.Cli
     /// SDK map round-trip: estimate from each reference <c>.bsp</c>, inject lights into the
     /// paired <c>.map</c>, recompile with heuristically inferred q3map2 settings, and score
     /// perceptual lightmap loss vs the reference. Emits <c>convergence.md</c>.
+    ///
+    /// <para>With <c>--iterate N</c>, each map goes through the
+    /// <see cref="RecompileRefiner"/> loop for N cycles, driving MSE down by
+    /// residual-aware per-light adjustment between compiles.</para>
     /// </summary>
     public static class ConvergeCommand
     {
@@ -52,6 +56,8 @@ namespace BspLightReSlopper.Cli
             int seed = int.TryParse(args.Get("seed"), out int sd) ? sd : 42;
             string game = args.Get("game") ?? "jk2";
             var timeout = TimeSpan.FromMinutes(int.TryParse(args.Get("timeout-mins"), out int tm) ? tm : 12);
+            int iterate = int.TryParse(args.Get("iterate"), out int it) ? it : 0;
+            float iterStep = float.TryParse(args.Get("iterate-step"), out float ist) ? ist : 48f;
 
             string? logPath = args.Get("log");
             using var log = new Logger(Console.Out, logPath);
@@ -72,8 +78,10 @@ namespace BspLightReSlopper.Cli
             var sb = new StringBuilder();
             sb.AppendLine("# BspLightReSlopper convergence report");
             sb.AppendLine();
-            sb.AppendLine("| map | est lights | compile | MSE RGB | RMSE | pairs | unmatched cand | forward SSE |");
-            sb.AppendLine("|---|---:|---|---:|---:|---:|---:|---:|");
+            sb.AppendLine("iterate passes: " + iterate + (iterate > 0 ? $" (recompile-refine enabled, step {iterStep:F0}u)" : " (single-shot)"));
+            sb.AppendLine();
+            sb.AppendLine("| map | est lights | iterated? | compile | MSE RGB | RMSE | pairs | unmatched cand | forward SSE | final lights |");
+            sb.AppendLine("|---|---:|:-:|---|---:|---:|---:|---:|---:|---:|");
 
             int okMaps = 0, failMaps = 0;
             foreach (var mapPath in mapLines)
@@ -156,6 +164,9 @@ namespace BspLightReSlopper.Cli
                         EnvelopeMultiplier = envMult,
                     }, log);
 
+                    // Establish the median-maps-to-300 q3 scale from the very first estimate
+                    // and reuse it for every subsequent injection so the CandidateIntensity
+                    // stays consistent across iterations.
                     float scale = 1f;
                     if (est.Lights.Count > 0)
                     {
@@ -164,58 +175,133 @@ namespace BspLightReSlopper.Cli
                         if (med > 1e-3f) scale = 300f / med;
                     }
 
-                    var defs = new List<LightDefinition>();
-                    foreach (var L in est.Lights)
-                    {
-                        defs.Add(new LightDefinition
-                        {
-                            Origin = L.Origin,
-                            Color = L.Color,
-                            Q3LightIntensity = L.Intensity * scale,
-                        });
-                    }
-
-                    var ws = new Dictionary<string, string>
-                    {
-                        ["_lightmapscale"] = infer.LightmapScale.ToString("0.###", CultureInfo.InvariantCulture),
-                    };
-
-                    var map = MapFileParser.ParseFile(mapPath);
-                    MapLightMerger.ReplaceLights(map, defs, new MapLightMerger.Options { WorldspawnKeys = ws });
-                    string workMap = Path.Combine(outDir, baseName + "_relit.map");
-                    MapFileWriter.Write(workMap, map);
-
-                    var compile = wrapper.Compile(workMap, ToCompileSettings(infer), timeout);
-                    string compileCell = compile.Succeeded ? "ok" : "fail";
+                    // ----- Optional recompile-refine loop (Phase H4) -----
+                    var finalLights = est.Lights.ToList();
                     float mse = 0, rmse = 0;
                     int pairs = 0, unmatched = 0;
-                    float fwdSse = LightEstimator.ForwardRgbSSE(refSmp.Samples, est.Lights, halfLambert);
+                    string compileCell;
 
-                    if (compile.Succeeded)
+                    if (iterate > 0)
                     {
-                        var newBsp = BspLoader.Load(compile.BspPath);
-                        var u2 = SurfaceUnpacker.Unpack(newBsp);
-                        var a2 = LightmapAtlas.FromBsp(newBsp);
-                        var col2 = new BspCollision(newBsp);
-                        var candSmp = TexelSampler.Sample(newBsp, u2, a2, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, col2);
-                        var loss = PerceptualLossEvaluator.Evaluate(refSmp.Samples, candSmp.Samples);
-                        mse = loss.MeanSquaredRgb;
-                        rmse = loss.RootMeanSquaredRgb;
-                        pairs = loss.PairsUsed;
-                        unmatched = loss.UnmatchedCandidates;
-                        okMaps++;
+                        string mapWorkDir = Path.Combine(outDir, baseName + "_refine");
+                        Directory.CreateDirectory(mapWorkDir);
+                        var refineOpts = new RecompileRefiner.Options
+                        {
+                            ReferenceMapPath = mapPath,
+                            WorkDir = mapWorkDir,
+                            Wrapper = wrapper,
+                            CompileSettings = ToCompileSettings(infer),
+                            PerCompileTimeout = timeout,
+                            MaxIterations = iterate,
+                            InitialStep = iterStep,
+                            HalfLambert = halfLambert,
+                            Q3IntensityScale = scale,
+                        };
+                        var refine = RecompileRefiner.Refine(
+                            refSmp.Samples,
+                            est.Lights,
+                            est.BlownMask,
+                            bboxMin,
+                            bboxMax,
+                            refineOpts,
+                            log);
+                        finalLights = refine.Lights.ToList();
+                        var lastOk = refine.Iterations.LastOrDefault(r => r.CompileSucceeded);
+                        if (lastOk != null)
+                        {
+                            mse = refine.FinalMse;
+                            rmse = MathF.Sqrt(mse);
+                            pairs = lastOk.PairsUsed;
+                            compileCell = $"iter{refine.Iterations.Count}";
+                            okMaps++;
+                        }
+                        else
+                        {
+                            compileCell = "iter-fail";
+                            failMaps++;
+                        }
                     }
                     else
                     {
-                        failMaps++;
+                        // Original single-shot path.
+                        var defs = new List<LightDefinition>();
+                        foreach (var L in est.Lights)
+                        {
+                            defs.Add(new LightDefinition
+                            {
+                                Origin = L.Origin,
+                                Color = L.Color,
+                                Q3LightIntensity = L.Intensity * scale,
+                            });
+                        }
+
+                        var ws = new Dictionary<string, string>
+                        {
+                            ["_lightmapscale"] = infer.LightmapScale.ToString("0.###", CultureInfo.InvariantCulture),
+                        };
+
+                        var map = MapFileParser.ParseFile(mapPath);
+                        MapLightMerger.ReplaceLights(map, defs, new MapLightMerger.Options { WorldspawnKeys = ws });
+                        string workMap = Path.Combine(outDir, baseName + "_relit.map");
+                        MapFileWriter.Write(workMap, map);
+
+                        var compile = wrapper.Compile(workMap, ToCompileSettings(infer), timeout);
+                        compileCell = compile.Succeeded ? "ok" : "fail";
+
+                        if (compile.Succeeded)
+                        {
+                            var newBsp = BspLoader.Load(compile.BspPath);
+                            var u2 = SurfaceUnpacker.Unpack(newBsp);
+                            var a2 = LightmapAtlas.FromBsp(newBsp);
+                            var col2 = new BspCollision(newBsp);
+                            var candSmp = TexelSampler.Sample(newBsp, u2, a2, new TexelSampler.SampleOptions { MaxSamples = maxSamples }, col2);
+                            var loss = PerceptualLossEvaluator.Evaluate(refSmp.Samples, candSmp.Samples);
+                            mse = loss.MeanSquaredRgb;
+                            rmse = loss.RootMeanSquaredRgb;
+                            pairs = loss.PairsUsed;
+                            unmatched = loss.UnmatchedCandidates;
+                            okMaps++;
+                        }
+                        else
+                        {
+                            failMaps++;
+                        }
                     }
 
-                    sb.AppendLine($"| {baseName} | {est.Lights.Count} | {compileCell} | {mse:F6} | {rmse:F6} | {pairs} | {unmatched} | {fwdSse:F0} |");
+                    float fwdSse = LightEstimator.ForwardRgbSSE(refSmp.Samples, finalLights, halfLambert, excludeMask: est.BlownMask);
+
+                    // Also emit the final .ent for diagnostic inspection.
+                    try
+                    {
+                        string entPath = Path.Combine(outDir, baseName + ".ent");
+                        var guesses = finalLights.Select(L => new EntityIo.EntFileWriter.GuessedLight
+                        {
+                            Origin = L.Origin,
+                            Color = L.Color,
+                            Intensity = L.Intensity * scale,
+                            Method = L.Method,
+                            Confidence = L.Confidence,
+                            SupportingTexels = L.SupportingTexels,
+                            ResidualEnergyExplainedFraction = L.ResidualEnergyExplainedFraction,
+                        }).ToList();
+                        EntityIo.EntFileWriter.Write(entPath, guesses, new EntityIo.EntFileWriter.WriteOptions
+                        {
+                            SourceBspName = bspPath,
+                            InferredCompile = infer.Display,
+                            CountsByType = new Dictionary<string, int> { ["total"] = finalLights.Count },
+                        });
+                    }
+                    catch (Exception entEx)
+                    {
+                        log.Warn("ent write failed: " + entEx.Message);
+                    }
+
+                    sb.AppendLine($"| {baseName} | {est.Lights.Count} | {(iterate > 0 ? "yes" : "no")} | {compileCell} | {mse:F6} | {rmse:F6} | {pairs} | {unmatched} | {fwdSse:F0} | {finalLights.Count} |");
                 }
                 catch (Exception ex)
                 {
                     log.Warn("error: " + ex.Message);
-                    sb.AppendLine($"| {baseName} | — | error | — | — | — | — | — |");
+                    sb.AppendLine($"| {baseName} | — | — | error | — | — | — | — | — | — |");
                     failMaps++;
                 }
             }

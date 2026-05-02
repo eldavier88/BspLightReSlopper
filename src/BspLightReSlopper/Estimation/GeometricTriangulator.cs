@@ -94,9 +94,26 @@ namespace BspLightReSlopper.Estimation
             public int PeaksFound { get; init; }
             public int RayPairsConsidered { get; init; }
             public int RayPairsIntersected { get; init; }
+            /// <summary>Number of peaks that came from the ring adjacent to a blown cluster
+            /// (carry valid directional info from a bright, non-clipped pixel on the rim).
+            /// These are the "blown-boundary peaks" from Phase H3.</summary>
+            public int BlownBoundaryPeaks { get; init; }
         }
 
-        public static Result Triangulate(IReadOnlyList<TexelSample> samples, Options? options = null, Logger? log = null)
+        /// <summary>Triangulate light positions from surface brightness peaks + surface-normal
+        /// rays. Pass <paramref name="coreSaturatedMask"/> from <see cref="BlowoutDetector.Result.CoreSaturatedMask"/>
+        /// to exclude saturated samples from the peak pool (their directional info is valid
+        /// but their "local max" position is arbitrary within a clipped plateau). When
+        /// <paramref name="blownClusters"/> is supplied, the ring of non-saturated neighbours
+        /// around each blown cluster is added to the peak pool — those texels carry strong,
+        /// non-clipped signal and give us extra rays pointing straight at the blowout's real
+        /// source (Phase H3).</summary>
+        public static Result Triangulate(
+            IReadOnlyList<TexelSample> samples,
+            Options? options = null,
+            Logger? log = null,
+            bool[]? coreSaturatedMask = null,
+            IReadOnlyList<BlowoutDetector.Cluster>? blownClusters = null)
         {
             options ??= new Options();
             int n = samples.Count;
@@ -122,6 +139,10 @@ namespace BspLightReSlopper.Estimation
             var peaksPerGroup = new Dictionary<(int surf, int stage), List<(int idx, float luma)>>();
             for (int i = 0; i < n; i++)
             {
+                // Phase H3: Skip saturated texels — their "local max" can snap to any pixel
+                // within a clipped plateau, poisoning the ray pool. Rely on the boundary
+                // ring peaks below for any light that blew out.
+                if (coreSaturatedMask != null && i < coreSaturatedMask.Length && coreSaturatedMask[i]) continue;
                 var s = samples[i];
                 var key = (s.SurfaceIndex, s.Stage);
                 float ownLuma = Luma(s.Observed);
@@ -131,12 +152,15 @@ namespace BspLightReSlopper.Estimation
                 if (ownLuma < options.PeakLumaMultiplier * meanL) continue;
 
                 // Local max: brighter than every sampled 4-neighbour in the same surface/stage.
+                // Saturated neighbours don't count (we're looking for real signal peaks).
                 bool isLocalMax = true;
                 int neighborCount = 0;
                 foreach (var (dx, dy) in Neighbours)
                 {
                     if (atlasIndex.TryGetValue((s.AtlasIndex, s.AtlasX + dx, s.AtlasY + dy, s.SurfaceIndex, s.Stage), out int j))
                     {
+                        if (coreSaturatedMask != null && j < coreSaturatedMask.Length && coreSaturatedMask[j])
+                            continue;
                         neighborCount++;
                         if (Luma(samples[j].Observed) > ownLuma) { isLocalMax = false; break; }
                     }
@@ -151,6 +175,50 @@ namespace BspLightReSlopper.Estimation
                 lst.Add((i, ownLuma));
             }
 
+            // ----- 1b. Phase H3: Blown-boundary peaks -------------------------------------
+            // For each blown cluster, add the BRIGHTEST non-saturated 4-neighbour of the
+            // cluster as a peak. These texels have real (un-clipped) luma and their normal
+            // points at the blown-cluster's real light source. Per cluster we emit at most
+            // `MaxBoundaryPeaksPerCluster` brightness-sorted samples so a huge saturated
+            // patch doesn't dominate the pool.
+            int blownBoundaryAdded = 0;
+            const int MaxBoundaryPeaksPerCluster = 4;
+            if (blownClusters != null && coreSaturatedMask != null)
+            {
+                foreach (var cluster in blownClusters)
+                {
+                    var boundaryCandidates = new List<(int idx, float luma)>();
+                    var seen = new HashSet<int>();
+                    foreach (int idx in cluster.SampleIndices)
+                    {
+                        foreach (var (dx, dy) in Neighbours)
+                        {
+                            if (atlasIndex.TryGetValue((samples[idx].AtlasIndex, samples[idx].AtlasX + dx, samples[idx].AtlasY + dy, samples[idx].SurfaceIndex, samples[idx].Stage), out int j))
+                            {
+                                if (j < coreSaturatedMask.Length && coreSaturatedMask[j]) continue;
+                                if (!seen.Add(j)) continue;
+                                float l = Luma(samples[j].Observed);
+                                if (l < options.PeakLumaFloor) continue;
+                                boundaryCandidates.Add((j, l));
+                            }
+                        }
+                    }
+                    boundaryCandidates.Sort((a, b) => b.luma.CompareTo(a.luma));
+                    int take = Math.Min(MaxBoundaryPeaksPerCluster, boundaryCandidates.Count);
+                    var keyCluster = (cluster.SurfaceIndex, cluster.Stage);
+                    if (!peaksPerGroup.TryGetValue(keyCluster, out var lst))
+                    {
+                        lst = new List<(int idx, float luma)>();
+                        peaksPerGroup[keyCluster] = lst;
+                    }
+                    for (int k = 0; k < take; k++)
+                    {
+                        lst.Add(boundaryCandidates[k]);
+                        blownBoundaryAdded++;
+                    }
+                }
+            }
+
             // Take top MaxPeaksPerSurface per group, then top MaxTotalPeaks globally.
             var allPeaks = new List<(int idx, float luma)>();
             foreach (var lst in peaksPerGroup.Values)
@@ -163,9 +231,10 @@ namespace BspLightReSlopper.Estimation
             if (allPeaks.Count > options.MaxTotalPeaks)
                 allPeaks.RemoveRange(options.MaxTotalPeaks, allPeaks.Count - options.MaxTotalPeaks);
 
-            log?.Info($"  triangulation: {allPeaks.Count} peak(s) across {peaksPerGroup.Count} surface-stage(s)");
+            log?.Info($"  triangulation: {allPeaks.Count} peak(s) across {peaksPerGroup.Count} surface-stage(s)" +
+                      (blownBoundaryAdded > 0 ? $" (including {blownBoundaryAdded} blown-boundary peaks)" : ""));
             if (allPeaks.Count < 2)
-                return new Result { Seeds = Array.Empty<TriangulatedSeed>(), PeaksFound = allPeaks.Count };
+                return new Result { Seeds = Array.Empty<TriangulatedSeed>(), PeaksFound = allPeaks.Count, BlownBoundaryPeaks = blownBoundaryAdded };
 
             // ----- 2. Pairwise ray-ray closest-approach intersection ------------------
             // For each pair of peaks from DIFFERENT surfaces (real triangulation requires
@@ -204,7 +273,7 @@ namespace BspLightReSlopper.Estimation
             log?.Info($"  triangulation: {pairsConsidered} ray-pairs considered, {pairsIntersected} intersected within {options.RayApproachThreshold:F0}u");
 
             if (candidatesPos.Count < options.MinClusterSupport)
-                return new Result { Seeds = Array.Empty<TriangulatedSeed>(), PeaksFound = allPeaks.Count, RayPairsConsidered = pairsConsidered, RayPairsIntersected = pairsIntersected };
+                return new Result { Seeds = Array.Empty<TriangulatedSeed>(), PeaksFound = allPeaks.Count, RayPairsConsidered = pairsConsidered, RayPairsIntersected = pairsIntersected, BlownBoundaryPeaks = blownBoundaryAdded };
 
             // ----- 3. Mean-shift cluster the candidate positions -----------------------
             var modes = new List<Vector3>();
@@ -284,6 +353,7 @@ namespace BspLightReSlopper.Estimation
                 PeaksFound = allPeaks.Count,
                 RayPairsConsidered = pairsConsidered,
                 RayPairsIntersected = pairsIntersected,
+                BlownBoundaryPeaks = blownBoundaryAdded,
             };
         }
 

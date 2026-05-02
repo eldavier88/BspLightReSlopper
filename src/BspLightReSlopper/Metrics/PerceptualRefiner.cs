@@ -41,11 +41,12 @@ namespace BspLightReSlopper.Metrics
             bool halfLambert,
             float fade,
             Options? options = null,
-            System.Threading.CancellationToken cancellationToken = default)
+            System.Threading.CancellationToken cancellationToken = default,
+            bool[]? excludeMask = null)
         {
             options ??= new Options();
             var L = CloneLights(lights);
-            float initial = LightEstimator.ForwardRgbSSE(samples, L, halfLambert, fade);
+            float initial = LightEstimator.ForwardRgbSSE(samples, L, halfLambert, fade, excludeMask);
             float sse = initial;
 
             for (int pass = 0; pass < options.Passes; pass++)
@@ -76,7 +77,7 @@ namespace BspLightReSlopper.Metrics
                                     Method = lk.Method + "+refine",
                                     BlownOut = lk.BlownOut,
                                 };
-                                float tSse = LightEstimator.ForwardRgbSSE(samples, trial, halfLambert, fade);
+                                float tSse = LightEstimator.ForwardRgbSSE(samples, trial, halfLambert, fade, excludeMask);
                                 if (tSse < sse - 1e-4f)
                                 {
                                     L = trial;
@@ -109,7 +110,7 @@ namespace BspLightReSlopper.Metrics
                                     Method = lk.Method + "+refine",
                                     BlownOut = lk.BlownOut,
                                 };
-                                float tSse = LightEstimator.ForwardRgbSSE(samples, trial, halfLambert, fade);
+                                float tSse = LightEstimator.ForwardRgbSSE(samples, trial, halfLambert, fade, excludeMask);
                                 if (tSse < sse - 1e-4f)
                                 {
                                     L = trial;

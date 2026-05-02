@@ -198,17 +198,37 @@ namespace BspLightReSlopper.Sampling
 
         private static int FindContaining(List<SurfaceTriangle> tris, int stage, float u, float v)
         {
-            // First pass: strict containment with tiny epsilon (handles padded atlas edges).
+            // Pick the triangle where (u, v) is "most strictly" contained. In overlap /
+            // edge cases on tessellated patches and tri-soup, this is more robust than
+            // the old first-match-wins: adjacent triangles sharing an edge both contain
+            // edge-adjacent pixels; "deepest-inside" picks the one the pixel belongs to
+            // canonically. We still reject if no triangle is within 1e-4 epsilon.
+            int bestIdx = -1;
+            float bestDeficit = float.PositiveInfinity;
+            var p = new Vector2(u, v);
             for (int i = 0; i < tris.Count; i++)
             {
                 var t = tris[i];
                 Vector2 a = t.LmStage(stage, 0);
                 Vector2 b = t.LmStage(stage, 1);
                 Vector2 c = t.LmStage(stage, 2);
-                if (!Bary2D(a, b, c, new Vector2(u, v), out float wa, out float wb, out float wc)) continue;
-                if (wa >= -1e-4f && wb >= -1e-4f && wc >= -1e-4f) return i;
+                if (!Bary2D(a, b, c, p, out float wa, out float wb, out float wc)) continue;
+                // "Deficit" = max(0, -min(wa, wb, wc)). 0 = strictly contained; positive
+                // = how far outside we are, in barycentric units.
+                float def = 0f;
+                if (wa < 0) def = -wa;
+                if (-wb > def) def = -wb;
+                if (-wc > def) def = -wc;
+                if (def < 0f) def = 0f;
+                if (def < bestDeficit)
+                {
+                    bestDeficit = def;
+                    bestIdx = i;
+                    if (def == 0f) return bestIdx; // strictly contained — stop.
+                }
             }
-            return -1;
+            if (bestDeficit > 1e-4f) return -1;
+            return bestIdx;
         }
 
         /// <summary>2D barycentric. Returns false if triangle is degenerate.</summary>
