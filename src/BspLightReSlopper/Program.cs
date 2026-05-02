@@ -12,12 +12,14 @@ namespace BspLightReSlopper
                 var parsed = CliArgs.Parse(args);
                 return parsed.Command switch
                 {
-                    "estimate"    => EstimateCommand.Run(parsed),
-                    "verify"      => VerifyCommand.Run(parsed),
-                    "inspect-bsp" => InspectBspCommand.Run(parsed),
-                    "help"        => PrintHelp(),
-                    "--help"      => PrintHelp(),
-                    "-h"          => PrintHelp(),
+                    "estimate"             => EstimateCommand.Run(parsed),
+                    "verify"               => VerifyCommand.Run(parsed),
+                    "inspect-bsp"          => InspectBspCommand.Run(parsed),
+                    "scatter"              => ScatterCommand.Run(parsed),
+                    "build-synthetic-map"  => BuildSyntheticMapCommand.Run(parsed),
+                    "help"                 => PrintHelp(),
+                    "--help"               => PrintHelp(),
+                    "-h"                   => PrintHelp(),
                     _ => UnknownCommand(parsed.Command),
                 };
             }
@@ -53,6 +55,11 @@ namespace BspLightReSlopper
             Console.WriteLine("              [--match-tolerance <units>] [--out <dir>]");
             Console.WriteLine();
             Console.WriteLine("  inspect-bsp --assets <dir> --bsp <path | path.pk3!maps/foo.bsp>");
+            Console.WriteLine();
+            Console.WriteLine("  scatter     --map <src.map> --bsp <src.bsp> --out <scatter.map>");
+            Console.WriteLine("              [--count N] [--seed N] [--clearance U]");
+            Console.WriteLine("              [--min-intensity I] [--max-intensity I]");
+            Console.WriteLine("              [--colored-fraction F] [--linear-fraction F] [--spot-fraction F]");
             Console.WriteLine();
             Console.WriteLine("  help");
             Console.WriteLine();
