@@ -155,6 +155,20 @@ namespace BspLightReSlopper.Estimation
             /// the LSQ corrupts the fit by pulling positions toward saturated centroids.</summary>
             public bool DetectBlowouts { get; init; } = true;
 
+            /// <summary>If true (default), run <see cref="GeometricTriangulator"/> as a
+            /// pre-pass: detect brightness peaks per surface, intersect their normal-aligned
+            /// rays from different surfaces, mean-shift cluster the meet-points. The
+            /// resulting cluster centres become seed candidates with a multiplicative score
+            /// boost in the per-round candidate evaluation. Combined with -- never replacing --
+            /// the existing RANSAC + LSQ greedy peel.</summary>
+            public bool UseTriangulation { get; init; } = true;
+
+            /// <summary>Score multiplier applied to candidates spawned from triangulated
+            /// seeds (the per-candidate energy-drop is multiplied by this). >1 makes
+            /// triangulated seeds preferred over uniform RANSAC candidates of equal
+            /// brightness; tuned conservatively so the LSQ still has the final say.</summary>
+            public float TriangulationSeedBoost { get; init; } = 1.25f;
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -245,6 +259,17 @@ namespace BspLightReSlopper.Estimation
                 }
             }
 
+            // ---- Phase E2 pre-pass: geometric triangulation. Detect surface brightness
+            // peaks, intersect normal-rays from different surfaces, mean-shift cluster the
+            // meet-points. The resulting cluster centres become seed candidate positions
+            // that get added to every round's candidate pool with a score boost.
+            var triangulationSeeds = new List<Vector3>();
+            if (options.UseTriangulation)
+            {
+                var triResult = GeometricTriangulator.Triangulate(samples, log: log);
+                foreach (var seed in triResult.Seeds) triangulationSeeds.Add(seed.Position);
+            }
+
             float initialEnergy = SumSq(rR, rG, rB);
             float currentEnergy = initialEnergy;
             log?.Info($"  initial residual energy: {initialEnergy:F2} ({n} samples" +
@@ -266,8 +291,11 @@ namespace BspLightReSlopper.Estimation
                     break;
                 }
 
-                // ---- 2. Build candidate set: pivots × normal offsets + uniform fillers ----
-                var cands = new Vector3[pivots.Count * options.NormalOffsets.Length + options.UniformFillerCount];
+                // ---- 2. Build candidate set: pivots × normal offsets + uniform fillers
+                //                                + triangulation seeds (E2)
+                int triCount = triangulationSeeds.Count;
+                var cands = new Vector3[pivots.Count * options.NormalOffsets.Length + options.UniformFillerCount + triCount];
+                var isTriSeed = new bool[cands.Length];
                 int ci = 0;
                 foreach (int pi in pivots)
                 {
@@ -291,6 +319,12 @@ namespace BspLightReSlopper.Estimation
                         bboxMin.X + (float)rng.NextDouble() * (bboxMax.X - bboxMin.X),
                         bboxMin.Y + (float)rng.NextDouble() * (bboxMax.Y - bboxMin.Y),
                         bboxMin.Z + (float)rng.NextDouble() * (bboxMax.Z - bboxMin.Z));
+                }
+                for (int t = 0; t < triCount; t++)
+                {
+                    cands[ci] = triangulationSeeds[t];
+                    isTriSeed[ci] = true;
+                    ci++;
                 }
 
                 // ---- 3. Score each candidate ----
@@ -339,6 +373,19 @@ namespace BspLightReSlopper.Estimation
                     }
                 }
 
+                // Apply the triangulation seed boost to each triangulated candidate. Score is
+                // the negated SSE-drop, so multiplying by >1 (more negative) makes the
+                // triangulated seed APPEAR better when its drop is genuinely positive, and
+                // doesn't help (and correctly stays "bad") when its drop is small/zero.
+                float boost = options.TriangulationSeedBoost;
+                if (triCount > 0 && boost > 1.0f)
+                {
+                    for (int k = 0; k < K; k++)
+                    {
+                        if (isTriSeed[k] && scores[k] < 0) scores[k] *= boost;
+                    }
+                }
+
                 int bestK = 0;
                 float bestScore = float.PositiveInfinity;
                 for (int k = 0; k < K; k++)
@@ -346,6 +393,7 @@ namespace BspLightReSlopper.Estimation
 
                 Vector3 bestL = cands[bestK];
                 Vector3 bestI = new Vector3(ir[bestK], ig[bestK], ib[bestK]);
+                bool bestWasTriSeed = isTriSeed[bestK];
                 if (bestI.LengthSquared() < 1e-12f)
                 {
                     log?.Info($"  round {round + 1}: best candidate fit yields zero intensity; stopping");
@@ -450,7 +498,7 @@ namespace BspLightReSlopper.Estimation
                     Confidence = confidence,
                     SupportingTexels = supportingTexels,
                     ResidualEnergyExplainedFraction = explainedFraction,
-                    Method = "ransac+greedy",
+                    Method = bestWasTriSeed ? "triangulation+lsq" : "ransac+greedy",
                 });
                 lightOrigins.Add(bestL);
                 lightIntensities.Add(bestI);
