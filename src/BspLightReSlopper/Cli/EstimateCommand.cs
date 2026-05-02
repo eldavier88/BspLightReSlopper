@@ -96,6 +96,12 @@ namespace BspLightReSlopper.Cli
             // ----- Estimate -----
             log.Section("estimator");
             bool noVis = args.Flag("no-vis");
+            // Half-Lambert default per format: JK2/JKA (RBSP1) ship that way, Q3A (IBSP46)
+            // does not. Either side can be forced via --half-lambert / --no-half-lambert.
+            bool halfLambertDefault = bsp.Format is BspLightReSlopper.Bsp.Formats.Rbsp1Format;
+            bool halfLambert = args.Flag("no-half-lambert") ? false
+                              : args.Flag("half-lambert") ? true
+                              : halfLambertDefault;
             var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
             {
                 MaxPivotsPerRound = maxPivots,
@@ -103,6 +109,7 @@ namespace BspLightReSlopper.Cli
                 RandomSeed = seed,
                 Collision = noVis ? null : collision,
                 Visibility = noVis ? null : vis,
+                HalfLambert = halfLambert,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");

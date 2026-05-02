@@ -116,6 +116,17 @@ namespace BspLightReSlopper.Estimation
             /// <summary>BSP PVS lookup. Used in conjunction with <see cref="Collision"/>.</summary>
             public BspVis? Visibility { get; init; }
 
+            /// <summary>
+            /// Use the q3map2 half-Lambert angle attenuation curve <c>((max(0,nL)*0.5+0.5)²</c>
+            /// instead of standard Lambert <c>max(0,nL)</c>. This is the default for the
+            /// JK2/JKA games (the netradiant-custom JKA gamepack sets <c>lightAngleHL = true</c>
+            /// and `-lightanglehl 1` is documented as the JK-family preset). Standard Lambert
+            /// underfits oblique-angle texels on those maps, which inflates fitted intensities
+            /// and biases positions toward perpendicular-rich regions of each light's footprint.
+            /// CLI defaults this to true for RBSP1 inputs and false for IBSP46 inputs.
+            /// </summary>
+            public bool HalfLambert { get; init; }
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -156,6 +167,10 @@ namespace BspLightReSlopper.Estimation
             bool useVis = options.Collision != null && options.Visibility != null && options.Visibility.HasVis;
             if (useVis)
                 log?.Info($"  visibility-aware mode: {options.Visibility!.NumClusters} clusters, {options.Visibility.BytesPerCluster}B/cluster");
+            if (options.HalfLambert)
+                log?.Info("  angle attenuation: half-Lambert (q3map2 -lightanglehl 1, JK2/JKA default)");
+            else
+                log?.Info("  angle attenuation: standard Lambert (Q3A default)");
 
             float initialEnergy = SumSq(rR, rG, rB);
             float currentEnergy = initialEnergy;
@@ -229,12 +244,13 @@ namespace BspLightReSlopper.Estimation
                     }
                 }
 
+                bool halfLambert = options.HalfLambert;
                 if (options.Parallel)
                 {
                     Parallel.For(0, K, k =>
                     {
                         FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
-                            supportR2, options.MaxIntensityCap,
+                            supportR2, options.MaxIntensityCap, halfLambert,
                             useVis ? options.Visibility : null, useVis ? candClusters[k] : 0,
                             out float i_r, out float i_g, out float i_b, out float sc);
                         scores[k] = sc; ir[k] = i_r; ig[k] = i_g; ib[k] = i_b;
@@ -245,7 +261,7 @@ namespace BspLightReSlopper.Estimation
                     for (int k = 0; k < K; k++)
                     {
                         FitSingleLight(cands[k], px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
-                            supportR2, options.MaxIntensityCap,
+                            supportR2, options.MaxIntensityCap, halfLambert,
                             useVis ? options.Visibility : null, useVis ? candClusters[k] : 0,
                             out float i_r, out float i_g, out float i_b, out float sc);
                         scores[k] = sc; ir[k] = i_r; ig[k] = i_g; ib[k] = i_b;
@@ -284,7 +300,7 @@ namespace BspLightReSlopper.Estimation
                                 trialCluster = (leaf >= 0 && leaf < options.Collision.LeafCount) ? options.Collision.LeafCluster(leaf) : -1;
                             }
                             FitSingleLight(trial, px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
-                                supportR2, options.MaxIntensityCap,
+                                supportR2, options.MaxIntensityCap, halfLambert,
                                 useVis ? options.Visibility : null, trialCluster,
                                 out float i_r, out float i_g, out float i_b, out float sc);
                             if (sc < betterScore)
@@ -318,6 +334,7 @@ namespace BspLightReSlopper.Estimation
                     sign: -1f,
                     countSupporting: true,
                     supportingFraction: options.SupportingFraction,
+                    halfLambert: options.HalfLambert,
                     vis: useVis ? options.Visibility : null,
                     candCluster: bestCluster);
                 currentEnergy = SumSq(rR, rG, rB);
@@ -334,6 +351,7 @@ namespace BspLightReSlopper.Estimation
                     // Roll back the subtraction.
                     ApplyContribution(bestL, bestI, px, py, pz, nx, ny, nz, rR, rG, rB, clusters, n, fade2,
                         sign: +1f, countSupporting: false, supportingFraction: 0f,
+                        halfLambert: options.HalfLambert,
                         vis: useVis ? options.Visibility : null, candCluster: bestCluster);
                     currentEnergy = energyBefore;
                     rejected++;
@@ -393,7 +411,7 @@ namespace BspLightReSlopper.Estimation
                     rB[i] = samples[i].Observed.Z;
                 }
                 JointRefit(lightOrigins, lightIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
-                    fade2, options.MaxIntensityCap, log);
+                    fade2, options.MaxIntensityCap, options.HalfLambert, log);
                 // Replace per-light intensities with refit values.
                 for (int li = 0; li < lights.Count; li++)
                 {
@@ -498,7 +516,7 @@ namespace BspLightReSlopper.Estimation
             float[] nx, float[] ny, float[] nz,
             float[] rR, float[] rG, float[] rB,
             int[] clusters,
-            int n, float fade2, float supportR2, float cap,
+            int n, float fade2, float supportR2, float cap, bool halfLambert,
             BspVis? vis, int candCluster,
             out float iR, out float iG, out float iB, out float score)
         {
@@ -516,8 +534,9 @@ namespace BspLightReSlopper.Estimation
                 if (vis != null && !vis.CanSee(candCluster, clusters[i])) continue;
                 float invD = 1f / MathF.Sqrt(d2);
                 float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
-                if (ndotL <= 0f) continue;
-                float g = ndotL / (d2 + fade2);
+                float angle = AngleAttenuation(ndotL, halfLambert);
+                if (angle <= 0f) continue;
+                float g = angle / (d2 + fade2);
                 sgg += g * g;
                 sgr_R += g * rR[i];
                 sgr_G += g * rG[i];
@@ -555,7 +574,7 @@ namespace BspLightReSlopper.Estimation
             float[] px, float[] py, float[] pz,
             float[] nx, float[] ny, float[] nz,
             float[] rR, float[] rG, float[] rB,
-            int n, float fade2, float cap, Logger? log)
+            int n, float fade2, float cap, bool halfLambert, Logger? log)
         {
             int K = origins.Count;
             // Precompute g_{i,k} into a row-major n×K matrix. With n=60k and K=60 that's 14MB
@@ -571,7 +590,8 @@ namespace BspLightReSlopper.Estimation
                     if (d2 < 1e-3f) { G[i * K + k] = 0; continue; }
                     float invD = 1f / MathF.Sqrt(d2);
                     float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
-                    G[i * K + k] = ndotL > 0 ? ndotL / (d2 + fade2) : 0;
+                    float angle = AngleAttenuation(ndotL, halfLambert);
+                    G[i * K + k] = angle > 0 ? angle / (d2 + fade2) : 0;
                 }
             }
 
@@ -637,6 +657,27 @@ namespace BspLightReSlopper.Estimation
             return v > cap ? cap : v;
         }
 
+        /// <summary>
+        /// q3map2's angle-attenuation factor. Standard Lambert <c>max(0, n·L̂)</c> is the Q3
+        /// default; half-Lambert <c>((min(n·L̂,1)·0.5 + 0.5)²</c> with a 0.001 dead-zone is
+        /// the JK2/JKA default (and the documented <c>-lightanglehl 1</c> mode). Half-Lambert
+        /// gives roughly 25%..100% lighting across the front hemisphere instead of
+        /// 0%..100%, which matters because a Lambert-only estimator on a half-Lambert-baked
+        /// map systematically overestimates light intensity (it has to compensate for the
+        /// "extra" oblique-angle brightness it can't explain) and biases positions toward
+        /// the perpendicular-rich part of each light's footprint.
+        /// </summary>
+        private static float AngleAttenuation(float ndotL, bool halfLambert)
+        {
+            if (!halfLambert)
+                return ndotL > 0f ? ndotL : 0f;
+            // Half-Lambert with the q3map2 0.001 dead-zone (skip coplanar). Match light.cpp:960.
+            if (ndotL <= 0.001f) return 0f;
+            if (ndotL > 1f) ndotL = 1f;
+            float a = ndotL * 0.5f + 0.5f;
+            return a * a;
+        }
+
         /// <summary>Add or remove a light's predicted contribution to the residual buffer.
         /// When <paramref name="sign"/> is -1 we subtract (forward greedy peel); +1 reverts.
         /// Returns the count of "supporting" texels (only meaningful when subtracting).
@@ -651,6 +692,7 @@ namespace BspLightReSlopper.Estimation
             int[] clusters,
             int n, float fade2,
             float sign, bool countSupporting, float supportingFraction,
+            bool halfLambert,
             BspVis? vis, int candCluster)
         {
             int support = 0;
@@ -662,8 +704,9 @@ namespace BspLightReSlopper.Estimation
                 if (vis != null && !vis.CanSee(candCluster, clusters[i])) continue;
                 float invD = 1f / MathF.Sqrt(d2);
                 float ndotL = nx[i] * dxv * invD + ny[i] * dyv * invD + nz[i] * dzv * invD;
-                if (ndotL <= 0f) continue;
-                float g = ndotL / (d2 + fade2);
+                float angle = AngleAttenuation(ndotL, halfLambert);
+                if (angle <= 0f) continue;
+                float g = angle / (d2 + fade2);
                 float dr = I.X * g, dg = I.Y * g, db = I.Z * g;
                 if (countSupporting)
                 {

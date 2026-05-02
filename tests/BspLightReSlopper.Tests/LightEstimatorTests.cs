@@ -147,6 +147,59 @@ namespace BspLightReSlopper.Tests
         }
 
         [Fact]
+        public void HalfLambert_SingleLight_RecoveredWithCorrectIntensity()
+        {
+            // Build a synthetic scene using the half-Lambert forward model q3map2 uses for
+            // JK2/JKA, then verify the estimator recovers it (a) at all (the dead-zone +
+            // squared curve is non-trivial to invert) and (b) with intensity within ~25%
+            // of truth (Lambert-on-half-Lambert data systematically over-fits intensity).
+            var Ltrue = new Vector3(0, 0, 96f);
+            float Itrue = 200f;
+            float fade2 = 32f * 32f;
+
+            int gridN = 32;
+            float spacing = 16f;
+            var samples = new System.Collections.Generic.List<TexelSample>();
+            for (int y = 0; y < gridN; y++)
+                for (int x = 0; x < gridN; x++)
+                {
+                    var p = new Vector3((x - gridN / 2f) * spacing, (y - gridN / 2f) * spacing, 0);
+                    var n = new Vector3(0, 0, 1);
+                    var d = Ltrue - p;
+                    float d2 = d.LengthSquared();
+                    float invLen = 1f / MathF.Sqrt(d2);
+                    float ndotL = (n.Z * d.Z) * invLen;
+                    if (ndotL <= 0.001f) continue;
+                    if (ndotL > 1) ndotL = 1;
+                    float halfL = ndotL * 0.5f + 0.5f;
+                    halfL *= halfL;
+                    float g = halfL / (d2 + fade2);
+                    var rgb = new Vector3(Itrue * g, Itrue * g, Itrue * g);
+                    samples.Add(new TexelSample { World = p, Normal = n, Observed = rgb });
+                }
+
+            var bboxMin = new Vector3(-300, -300, 0);
+            var bboxMax = new Vector3(+300, +300, 200);
+            var result = LightEstimator.Estimate(samples, bboxMin, bboxMax,
+                new LightEstimator.Options
+                {
+                    MaxLights = 4,
+                    Fade = 32f,
+                    RandomSeed = 7,
+                    UniformFillerCount = 50,
+                    Parallel = false,
+                    HalfLambert = true,
+                });
+
+            Assert.True(result.Lights.Count >= 1, $"expected >=1 light, got {result.Lights.Count}");
+            var l0 = result.Lights[0];
+            float posErr = (l0.Origin - Ltrue).Length();
+            Assert.True(posErr < 32f, $"position error {posErr:F1}u too large");
+            float ratio = l0.Intensity / Itrue;
+            Assert.True(ratio > 0.6f && ratio < 1.5f, $"intensity ratio {ratio:F2} far from 1.0");
+        }
+
+        [Fact]
         public void NoLight_DegenerateInput_StopsCleanly()
         {
             var samples = new List<TexelSample>();

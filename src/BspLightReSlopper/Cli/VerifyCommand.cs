@@ -99,6 +99,10 @@ namespace BspLightReSlopper.Cli
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
 
                 bool noVis = args.Flag("no-vis");
+                bool halfLambertDefault = bsp.Format is BspLightReSlopper.Bsp.Formats.Rbsp1Format;
+                bool halfLambert = args.Flag("no-half-lambert") ? false
+                                  : args.Flag("half-lambert") ? true
+                                  : halfLambertDefault;
                 var result = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
                 {
                     MaxPivotsPerRound = maxPivots,
@@ -106,6 +110,7 @@ namespace BspLightReSlopper.Cli
                     RandomSeed = seed,
                     Collision = noVis ? null : collision,
                     Visibility = noVis ? null : vis,
+                    HalfLambert = halfLambert,
                 });
 
                 var truthOrigins = gt.Lights.Select(x => x.Origin).ToList();

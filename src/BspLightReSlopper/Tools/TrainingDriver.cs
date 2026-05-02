@@ -205,11 +205,13 @@ namespace BspLightReSlopper.Tools
                 foreach (var s in samples.Samples) { bboxMin = Vector3.Min(bboxMin, s.World); bboxMax = Vector3.Max(bboxMax, s.World); }
                 if (bsp.Models.Count > 0) { bboxMin = Vector3.Min(bboxMin, bsp.Models[0].Mins); bboxMax = Vector3.Max(bboxMax, bsp.Models[0].Maxs); }
                 var estSw = System.Diagnostics.Stopwatch.StartNew();
+                bool halfLambert = bsp.Format is BspLightReSlopper.Bsp.Formats.Rbsp1Format;
                 var estimate = LightEstimator.Estimate(samples.Samples, bboxMin, bboxMax, new LightEstimator.Options
                 {
                     MaxLights = o.EstimatorMaxLights,
                     MaxPivotsPerRound = o.EstimatorPivots,
                     RandomSeed = seed,
+                    HalfLambert = halfLambert,
                 });
                 estSw.Stop();
 
