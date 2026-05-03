@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
-    <TargetFrameworks>net10.0;net5.0</TargetFrameworks>
+    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>BspLightReSlopper.WebApi</RootNamespace>
     <AssemblyName>BspLightReSlopper.WebApi</AssemblyName>
     <LangVersion>9.0</LangVersion>
@@ -15,6 +15,10 @@
 
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageReference Include="Swashbuckle.AspNetCore" Version="6.9.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0-preview.1.25081.1" />
   </ItemGroup>
 
 </Project>

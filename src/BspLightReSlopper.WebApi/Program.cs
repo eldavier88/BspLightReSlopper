@@ -1,7 +1,11 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using BspLightReSlopper.WebApi.Data;
+using BspLightReSlopper.WebApi.Hubs;
+using BspLightReSlopper.WebApi.Services;
 
 namespace BspLightReSlopper.WebApi
 {
@@ -26,6 +30,18 @@ namespace BspLightReSlopper.WebApi
         {
             services.AddControllers();
             services.AddSignalR();
+            services.AddDbContext<AppDbContext>(opt =>
+                opt.UseSqlite("Data Source=bsplrs.db"));
+            services.AddHostedService<JobQueueService>();
+            services.AddCors(opt =>
+            {
+                opt.AddPolicy("WebClient", p =>
+                    p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader());
+            });
+#if NET10_0_OR_GREATER
+            services.AddEndpointsApiExplorer();
+            services.AddSwaggerGen();
+#endif
         }
 
         public void Configure(IApplicationBuilder app, IWebHostEnvironment env)
@@ -33,22 +49,19 @@ namespace BspLightReSlopper.WebApi
             if (env.IsDevelopment())
             {
                 app.UseDeveloperExceptionPage();
+#if NET10_0_OR_GREATER
+                app.UseSwagger();
+                app.UseSwaggerUI();
+#endif
             }
 
             app.UseRouting();
+            app.UseCors("WebClient");
             app.UseEndpoints(endpoints =>
             {
                 endpoints.MapControllers();
-                endpoints.MapHub<JobProgressHub>("/hubs/jobs");
+                endpoints.MapHub<JobHub>("/hubs/jobs");
             });
-        }
-    }
-
-    public class JobProgressHub : Microsoft.AspNetCore.SignalR.Hub
-    {
-        public async System.Threading.Tasks.Task Subscribe(string jobId)
-        {
-            await Groups.AddToGroupAsync(Context.ConnectionId, jobId);
         }
     }
 }
