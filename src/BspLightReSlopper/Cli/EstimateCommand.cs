@@ -146,6 +146,7 @@ namespace BspLightReSlopper.Cli
                 HalfLambert = halfLambert,
                 EnvelopeMultiplier = envMult,
                 RoomPrior = roomDetect,
+                JointRefitL1Penalty = args.FlagOrDefault("disambiguate-overlap", "no-disambiguate-overlap", true) ? 5.0f : 0.0f,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");
@@ -170,7 +171,8 @@ namespace BspLightReSlopper.Cli
                     {
                         log.Info("no asset directory — bounce suppression will use the shader-name albedo heuristic (less reliable than --assets, but still drops obvious bounce-fit false positives)");
                     }
-                    var bsResult = BspLightReSlopper.Estimation.BounceSuppressor.Filter(result.Lights, samples.Samples, bsp, albedoCache, halfLambert, log: log);
+                    var bsOpts = new BspLightReSlopper.Estimation.BounceSuppressor.Options { RoomPrior = roomDetect };
+                    var bsResult = BspLightReSlopper.Estimation.BounceSuppressor.Filter(result.Lights, samples.Samples, bsp, albedoCache, halfLambert, options: bsOpts, log: log);
                     result = new LightEstimator.Result
                     {
                         Lights = bsResult.KeptLights,

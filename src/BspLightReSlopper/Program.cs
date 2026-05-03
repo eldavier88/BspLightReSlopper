@@ -75,6 +75,7 @@ namespace BspLightReSlopper
             Console.WriteLine("                [--no-refine-lights]     photometric coordinate descent polish");
             Console.WriteLine("                [--no-vis]               PVS-aware estimation");
             Console.WriteLine("                [--no-bounce-suppress]   bounce-fit false-positive rejection");
+            Console.WriteLine("                [--no-disambiguate-overlap] L1-penalty in JointRefit to prune weak overlaps");
             Console.WriteLine("                [--no-classify]          point/spot/linear classification");
             Console.WriteLine("                [--no-sun]               sun detection");
             Console.WriteLine("                [--emit-sky-shader]      write companion .sky.shader for detected sun");

@@ -45,6 +45,11 @@ namespace BspLightReSlopper.Estimation
             /// with disagreeing albedos (cosine sim &lt; 0.8 between any two), we DO NOT
             /// suppress -- a true direct light typically illuminates several materials.</summary>
             public int MaxDistinctShadersForSuppress { get; init; } = 2;
+
+            /// <summary>Room detection results used to adjust bounce suppression heuristics.
+            /// In enclosed Indoor rooms, radiosity bounce is much stronger, so the IntensityFloor
+            /// is dynamically raised (suppressing brighter false-positive bounces).</summary>
+            public Heuristics.RoomDetector.Result? RoomPrior { get; init; }
         }
 
         public sealed class Decision
@@ -100,7 +105,24 @@ namespace BspLightReSlopper.Estimation
                     continue;
                 }
                 // Bright lights are kept regardless of color match.
-                if (l.Intensity >= options.IntensityFloor)
+                // Indoor refinement: enclosed rooms have much brighter bounce light, so we raise
+                // the intensity floor to catch those brighter false positives.
+                float floor = options.IntensityFloor;
+                if (options.RoomPrior != null)
+                {
+                    int rIdx = options.RoomPrior.FindRoomIndex(l.Origin);
+                    if (rIdx >= 0)
+                    {
+                        var kind = options.RoomPrior.Rooms[rIdx].Kind;
+                        if (kind != Heuristics.RoomDetector.RoomKind.Outdoor && 
+                            kind != Heuristics.RoomDetector.RoomKind.Unknown)
+                        {
+                            floor *= 2.0f;
+                        }
+                    }
+                }
+
+                if (l.Intensity >= floor)
                 {
                     keep.Add(l);
                     decisions.Add(new Decision { Suppress = false, Reason = "intensity-above-floor" });

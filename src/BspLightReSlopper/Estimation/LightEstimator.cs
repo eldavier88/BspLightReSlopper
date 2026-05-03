@@ -109,6 +109,11 @@ namespace BspLightReSlopper.Estimation
             /// the residual leakage that greedy peeling leaves between overlapping lights.</summary>
             public bool JointRefitAfter { get; init; } = true;
 
+            /// <summary>L1 regularization penalty applied during JointRefit. Pushes overlapping
+            /// redundant weak lights to zero intensity, favoring a sparser set of dominant lights
+            /// and resolving multi-overlap conflicts.</summary>
+            public float JointRefitL1Penalty { get; init; } = 0.0f;
+
             /// <summary>If true, after the joint refit, merge accepted lights whose origins
             /// are within <see cref="MergeRadius"/> of each other. The greedy peel often
             /// places several closely-spaced candidates as it refines its estimate of one
@@ -619,7 +624,42 @@ namespace BspLightReSlopper.Estimation
                     rB[i] = samples[i].Observed.Z;
                 }
                 JointRefit(lightOrigins, lightIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
-                    fade2, options.MaxIntensityCap, options.HalfLambert, log);
+                    fade2, options.MaxIntensityCap, options.HalfLambert, options.JointRefitL1Penalty, log);
+
+                if (options.JointRefitL1Penalty > 0)
+                {
+                    // Relaxed LASSO: drop zeroed lights and refit without penalty to restore unbiased intensity.
+                    var nonzeroOrigins = new List<Vector3>();
+                    var nonzeroIntensities = new List<Vector3>();
+                    var nonzeroLights = new List<EstimatedLight>();
+                    for (int li = 0; li < lights.Count; li++)
+                    {
+                        if (lightIntensities[li].LengthSquared() > 1e-6f)
+                        {
+                            nonzeroOrigins.Add(lightOrigins[li]);
+                            nonzeroIntensities.Add(lightIntensities[li]);
+                            nonzeroLights.Add(lights[li]);
+                        }
+                    }
+                    if (nonzeroLights.Count < lights.Count && nonzeroLights.Count > 0)
+                    {
+                        log?.Info($"  relaxed-lasso: dropped {lights.Count - nonzeroLights.Count} lights zeroed by L1 penalty");
+                        lights = nonzeroLights;
+                        lightOrigins = nonzeroOrigins;
+                        lightIntensities = nonzeroIntensities;
+                        
+                        // Restore rR, rG, rB to original observed before the unpenalized refit
+                        for (int i = 0; i < n; i++)
+                        {
+                            rR[i] = samples[i].Observed.X;
+                            rG[i] = samples[i].Observed.Y;
+                            rB[i] = samples[i].Observed.Z;
+                        }
+                        JointRefit(lightOrigins, lightIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
+                            fade2, options.MaxIntensityCap, options.HalfLambert, 0.0f, log);
+                    }
+                }
+
                 // Replace per-light intensities with refit values.
                 for (int li = 0; li < lights.Count; li++)
                 {
@@ -669,7 +709,40 @@ namespace BspLightReSlopper.Estimation
                             mergedIntensities.Add(lights[li].Color * lights[li].Intensity);
                         }
                         JointRefit(mergedOrigins, mergedIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
-                            fade2, options.MaxIntensityCap, options.HalfLambert, log);
+                            fade2, options.MaxIntensityCap, options.HalfLambert, options.JointRefitL1Penalty, log);
+
+                        if (options.JointRefitL1Penalty > 0)
+                        {
+                            var nonzeroOrigins = new List<Vector3>();
+                            var nonzeroIntensities = new List<Vector3>();
+                            var nonzeroLights = new List<EstimatedLight>();
+                            for (int li = 0; li < lights.Count; li++)
+                            {
+                                if (mergedIntensities[li].LengthSquared() > 1e-6f)
+                                {
+                                    nonzeroOrigins.Add(mergedOrigins[li]);
+                                    nonzeroIntensities.Add(mergedIntensities[li]);
+                                    nonzeroLights.Add(lights[li]);
+                                }
+                            }
+                            if (nonzeroLights.Count < lights.Count && nonzeroLights.Count > 0)
+                            {
+                                log?.Info($"  relaxed-lasso (post-merge): dropped {lights.Count - nonzeroLights.Count} lights");
+                                lights = nonzeroLights;
+                                mergedOrigins = nonzeroOrigins;
+                                mergedIntensities = nonzeroIntensities;
+                                
+                                for (int i = 0; i < n; i++)
+                                {
+                                    rR[i] = samples[i].Observed.X;
+                                    rG[i] = samples[i].Observed.Y;
+                                    rB[i] = samples[i].Observed.Z;
+                                }
+                                JointRefit(mergedOrigins, mergedIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
+                                    fade2, options.MaxIntensityCap, options.HalfLambert, 0.0f, log);
+                            }
+                        }
+
                         for (int li = 0; li < lights.Count; li++)
                         {
                             var I = mergedIntensities[li];
@@ -998,7 +1071,7 @@ namespace BspLightReSlopper.Estimation
             float[] px, float[] py, float[] pz,
             float[] nx, float[] ny, float[] nz,
             float[] rR, float[] rG, float[] rB,
-            int n, float fade2, float cap, bool halfLambert, Logger? log)
+            int n, float fade2, float cap, bool halfLambert, float l1Penalty, Logger? log)
         {
             int K = origins.Count;
             // Precompute g_{i,k} into a row-major n×K matrix. With n=60k and K=60 that's 14MB
@@ -1055,6 +1128,9 @@ namespace BspLightReSlopper.Estimation
                             float g = G[i * K + k];
                             num += g * (e[i] + g * I[k]);
                         }
+                        // L1 Soft Thresholding
+                        num -= l1Penalty;
+                        
                         float Inew = (float)(num / diag[k]);
                         if (Inew < 0) Inew = 0;
                         if (Inew > cap) Inew = cap;
