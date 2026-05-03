@@ -1,0 +1,102 @@
+name: Prerelease
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        rid: [win-x64, linux-x64, osx-x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            5.0.x
+            8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test --no-build --configuration Release --nologo
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          PREFIX=$(grep -oP '(?<=<VersionPrefix>)[^<]+' Directory.Build.props)
+          echo "prefix=$PREFIX" >> $GITHUB_OUTPUT
+          echo "full=v${PREFIX}-alpha.${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Publish ${{ matrix.rid }}
+        run: |
+          dotnet publish src/BspLightReSlopper/BspLightReSlopper.csproj \
+            -c Release \
+            -r ${{ matrix.rid }} \
+            --self-contained false \
+            -p:PublishSingleFile=true \
+            -p:Version=${{ steps.version.outputs.prefix }}-alpha.${{ github.run_number }}
+
+      - name: Package artifact
+        shell: bash
+        run: |
+          mkdir -p artifacts
+          RID="${{ matrix.rid }}"
+          SRC="src/BspLightReSlopper/bin/Release/net5.0/${RID}/publish"
+          if [ "$RID" = "win-x64" ]; then
+            cp "${SRC}/bsplrs.exe" "artifacts/bsplrs-${RID}.exe"
+          else
+            cp "${SRC}/bsplrs" "artifacts/bsplrs-${RID}"
+            chmod +x "artifacts/bsplrs-${RID}"
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.rid }}-binary
+          path: artifacts/*
+
+  create-release:
+    needs: build-test-publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute version
+        id: version
+        shell: bash
+        run: |
+          PREFIX=$(grep -oP '(?<=<VersionPrefix>)[^<]+' Directory.Build.props)
+          echo "full=v${PREFIX}-alpha.${GITHUB_RUN_NUMBER}" >> $GITHUB_OUTPUT
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.full }}"
+          echo "Creating prerelease ${TAG}"
+          gh release create "${TAG}" \
+            --prerelease \
+            --title "Pre-release ${TAG}" \
+            --notes "Automated pre-release build. Commit: ${{ github.sha }}" \
+            artifacts/*

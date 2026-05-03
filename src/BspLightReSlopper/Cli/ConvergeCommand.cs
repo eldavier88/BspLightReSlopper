@@ -78,7 +78,7 @@ namespace BspLightReSlopper.Cli
             var sb = new StringBuilder();
             sb.AppendLine("# BspLightReSlopper convergence report");
             sb.AppendLine();
-            sb.AppendLine("iterate passes: " + iterate + (iterate > 0 ? $" (recompile-refine enabled, step {iterStep:F0}u)" : " (single-shot)"));
+            sb.AppendLine("iterate passes: " + iterate + (iterate > 0 ? $" (dev-validate recompile enabled, step {iterStep:F0}u)" : " (single-shot)"));
             sb.AppendLine();
             sb.AppendLine("| map | est lights | iterated? | compile | MSE RGB | RMSE | pairs | unmatched cand | forward SSE | final lights |");
             sb.AppendLine("|---|---:|:-:|---|---:|---:|---:|---:|---:|---:|");

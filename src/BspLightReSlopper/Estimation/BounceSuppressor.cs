@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using BspLightReSlopper.Bsp;
 using BspLightReSlopper.Sampling;
@@ -63,9 +64,15 @@ namespace BspLightReSlopper.Estimation
         }
 
         public static Result Filter(IReadOnlyList<EstimatedLight> lights, IReadOnlyList<TexelSample> samples,
-            BspFile bsp, AlbedoCache albedo, bool halfLambert, Options? options = null, Logger? log = null)
+            BspFile bsp, AlbedoCache? albedo, bool halfLambert, Options? options = null, Logger? log = null)
         {
             options ??= new Options();
+            if (albedo is null)
+            {
+                log?.Info("  bounce-suppress: no albedo cache — skipping colour-matching heuristic (keeping all non-blowout lights)");
+                var allDecisions = lights.Select(l => new Decision { Suppress = false, Reason = l.BlownOut ? "blowout-seed" : "no-albedo-cache" }).ToList();
+                return new Result { KeptLights = lights.ToList(), SuppressedLights = Array.Empty<EstimatedLight>(), Decisions = allDecisions };
+            }
             var keep = new List<EstimatedLight>(lights.Count);
             var drop = new List<EstimatedLight>();
             var decisions = new List<Decision>(lights.Count);

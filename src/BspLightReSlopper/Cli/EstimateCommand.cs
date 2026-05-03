@@ -24,7 +24,6 @@ namespace BspLightReSlopper.Cli
             string bspArg = args.Require("bsp");
             string? outPath = args.Get("o") ?? args.Get("out");
             string? logPath = args.Get("log");
-            int maxLights = int.TryParse(args.Get("max-lights"), out int ml) ? ml : 64;
             int maxSamples = int.TryParse(args.Get("max-samples"), out int ms) ? ms : 200_000;
             int maxPivots = int.TryParse(args.Get("pivots"), out int cs) ? cs : 800;
             int seed = int.TryParse(args.Get("seed"), out int s) ? s : 42;
@@ -48,6 +47,16 @@ namespace BspLightReSlopper.Cli
             var bsp = BspLoader.LoadFromBytes(resolved.Bytes);
             log.Info($"format:  {bsp.Format.DisplayName}");
             log.Info($"surfaces: {bsp.Surfaces.Count}, drawverts: {bsp.DrawVerts.Count}, lightmap atlases: {bsp.LightmapAtlasCount}");
+
+            // ----- Auto-detect heuristics (no flags needed) -----
+            log.Section("auto-detect");
+            var roomDetect = RoomDetector.Detect(bsp);
+            int autoMaxLights = roomDetect.Rooms.Count > 0
+                ? roomDetect.Rooms.Sum(r => Math.Min(r.SuggestedLightCount, 32))
+                : 64;
+            int maxLights = int.TryParse(args.Get("max-lights"), out int ml) ? ml : autoMaxLights;
+            log.Info($"rooms detected: {roomDetect.Rooms.Count} ({roomDetect.LeafCount} leafs, {roomDetect.UnassignedLeafCount} unassigned)");
+            log.Info($"room-based max-lights: {autoMaxLights} (override with --max-lights)");
 
             // ----- Surface unpack -----
             log.Section("surface unpack");
@@ -138,17 +147,26 @@ namespace BspLightReSlopper.Cli
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");
 
             // ----- Bounce light suppression (before classification / .ent) -----
-            if (stack != null && !args.Flag("no-bounce-suppress"))
+            // ----- Bounce suppression (works with or without assets) -----
+            if (!args.Flag("no-bounce-suppress"))
             {
                 try
                 {
                     log.Section("bounce suppression");
-                    var shaders = BspLightReSlopper.Shaders.ShaderParser.ParseAllInPk3Stack(stack);
-                    log.Info($"shaders parsed: {shaders.Count}");
-                    var albedoCache = new BspLightReSlopper.Shaders.AlbedoCache(stack, shaders);
+                    BspLightReSlopper.Shaders.AlbedoCache? albedoCache = null;
+                    if (stack != null)
+                    {
+                        var shaders = BspLightReSlopper.Shaders.ShaderParser.ParseAllInPk3Stack(stack);
+                        log.Info($"shaders parsed: {shaders.Count}");
+                        albedoCache = new BspLightReSlopper.Shaders.AlbedoCache(stack, shaders);
+                        var (h, m) = albedoCache.Stats();
+                        log.Info($"albedo cache: {h} hits / {m} misses");
+                    }
+                    else
+                    {
+                        log.Info("no asset directory — using white-albedo fallback (bounce suppression limited)");
+                    }
                     var bsResult = BspLightReSlopper.Estimation.BounceSuppressor.Filter(result.Lights, samples.Samples, bsp, albedoCache, halfLambert, log: log);
-                    var (h, m) = albedoCache.Stats();
-                    log.Info($"albedo cache: {h} hits / {m} misses");
                     result = new LightEstimator.Result
                     {
                         Lights = bsResult.KeptLights,
@@ -207,24 +225,22 @@ namespace BspLightReSlopper.Cli
                 };
             }
 
-            // ----- Phase H4: optional recompile-refine loop. Requires --q3map2 and
-            // --base-path (fs_basepath) plus --map <path.map> pointing at the .map the
-            // user has authored / wants to keep brush-stable. The loop minimises perceptual
-            // MSE between reference bake and candidate bake by driving per-light
-            // intensity + position updates from per-texel residuals.
-            int recompileRefine = int.TryParse(args.Get("recompile-refine"), out int rrn) ? rrn : 0;
-            if (recompileRefine > 0)
+            // ----- Phase H4: optional DEV-VALIDATE loop (internal use only).
+            // This is a developer-only recompile-validation tool used to refine the
+            // algorithm itself. Normal workflow does NOT require q3map2 or recompilation.
+            int devValidate = int.TryParse(args.Get("dev-validate"), out int dvv) ? dvv : 0;
+            if (devValidate > 0)
             {
                 string? q3map2 = args.Get("q3map2") ?? Environment.GetEnvironmentVariable("BSPLRS_Q3MAP2");
                 string? basePath = args.Get("base-path") ?? Environment.GetEnvironmentVariable("BSPLRS_JK2_ASSETS");
                 string? mapPath = args.Get("map");
                 if (string.IsNullOrEmpty(q3map2) || string.IsNullOrEmpty(basePath) || string.IsNullOrEmpty(mapPath))
                 {
-                    log.Warn("recompile-refine: skipped (needs --q3map2, --base-path, --map). Running photometric-only refine instead.");
+                    log.Warn("dev-validate: skipped (needs --q3map2, --base-path, --map). Running photometric-only refine instead.");
                 }
                 else
                 {
-                    log.Section($"recompile-refine loop ({recompileRefine} iterations)");
+                    log.Section($"dev-validate recompile loop ({devValidate} iterations)");
                     string game = args.Get("game") ?? "jk2";
                     var wrapper = new BspLightReSlopper.Tools.Q3Map2Wrapper(q3map2!, basePath!, fsGame: "", gameToken: game);
                     string workRoot = Path.Combine(Path.GetDirectoryName(outPath) ?? ".", Path.GetFileNameWithoutExtension(outPath) + "_refine");
@@ -247,13 +263,13 @@ namespace BspLightReSlopper.Cli
                             Filter = true,
                         },
                         PerCompileTimeout = TimeSpan.FromMinutes(int.TryParse(args.Get("refine-timeout-mins"), out int rtm) ? rtm : 10),
-                        MaxIterations = recompileRefine,
+                        MaxIterations = devValidate,
                         InitialStep = float.TryParse(args.Get("refine-step"), out float rss) ? rss : 48f,
                         HalfLambert = halfLambert,
                     };
                     var refine = BspLightReSlopper.Metrics.RecompileRefiner.Refine(
                         samples.Samples, result.Lights, result.BlownMask, bboxMin, bboxMax, refineOpts, log);
-                    log.Info($"recompile-refine: MSE {refine.InitialMse:F6} -> {refine.FinalMse:F6} over {refine.Iterations.Count} iteration(s); best iter={refine.BestIteration}; final lights={refine.Lights.Count}");
+                    log.Info($"dev-validate: MSE {refine.InitialMse:F6} -> {refine.FinalMse:F6} over {refine.Iterations.Count} iteration(s); best iter={refine.BestIteration}; final lights={refine.Lights.Count}");
                     result = new LightEstimator.Result
                     {
                         Lights = new List<EstimatedLight>(refine.Lights),

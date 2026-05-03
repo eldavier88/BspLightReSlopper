@@ -8,5 +8,6 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <InvariantGlobalization>false</InvariantGlobalization>
     <NeutralLanguage>en-US</NeutralLanguage>
+    <VersionPrefix>0.1.0</VersionPrefix>
   </PropertyGroup>
 </Project>

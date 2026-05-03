@@ -9,21 +9,23 @@ CPU-only, .NET 5.0, single CLI binary `bsplrs`. No GPU / CUDA / OpenCL.
 ## Final user-facing workflow
 
 ```
-bsplrs estimate --assets <asset-dir> --bsp <path | path.pk3!maps/foo.bsp>
-                [-o <out.ent>] [--log <log>] [--no-vis]
+bsplrs estimate --bsp <path | path.pk3!maps/foo.bsp>
+                [--assets <asset-dir>] [-o <out.ent>] [--log <log>] [--no-vis]
                 [--max-samples N] [--pivots N] [--max-lights N] [--seed N]
                 [--half-lambert] [--infer-angle-model]
                 [--minimize-lights] [--minimize-lights-tolerance F]
                 [--refine-lights] [--refine-passes N] [--refine-step U]
-                [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>]
+                [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>]
 ```
 
 Inputs:
-- `--assets` — folder containing the game's `.pk3` archives (and/or loose `maps/`,
-  `scripts/`, `textures/` folders). Used only to resolve shaders/textures referenced by the
-  BSP; the estimator itself works directly on the BSP.
 - `--bsp` — either a loose `.bsp` file path, or `archive.pk3!maps/foo.bsp` to read from inside
-  a `.pk3`.
+  a `.pk3`. This is the only required argument.
+- `--assets` — *(optional but recommended)* folder containing the game's `.pk3` archives
+  (and/or loose `maps/`, `scripts/`, `textures/` folders). Used to improve bounce-suppression
+  heuristics by resolving material albedo. When omitted, the estimator falls back to a
+  white-albedo approximation and still produces good results.
+- All other flags are optional — sensible defaults are auto-detected from the BSP geometry.
 
 Outputs:
 - `<bsp>.ent` — Quake-style `.map` entity blocks for every estimated `light`, with the standard
@@ -77,10 +79,10 @@ bsplrs converge     --assets <dir> --base-path <fs_basepath> --q3map2 <q3map2.ex
                     "match the look" optimisation; keeps best iteration's lights).
 
 bsplrs estimate ... [--minimize-lights] [--refine-lights]
-                    [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>]
+                    [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>]
                     Single-map variant of the converge loop: minimise light count
                     (L0 greedy with SSE budget), photometric refine, and optionally
-                    do N actual q3map2 recompiles to converge on the reference look.
+                    a developer-only recompile-validation loop for algorithm refinement.
 
 bsplrs dump-samples / build-synthetic-map — see bsplrs help
 ```
@@ -242,10 +244,10 @@ perceptual-loss scoring.
 *includes* blown-cluster boundary peaks (brightest non-saturated neighbour, projected in the
 outward normal direction) as additional intersection rays. This recovers directional signal
 from clipped regions without trusting their intensities.
-- **RecompileRefiner** — closed-loop `inject → q3map2 recompile → pair texels in world space
-(27-cell voxel hash) → residual-driven intensity + position adjustment → keep best iteration`.
-The objective is **perceptual MSE** (not entity-list match), so "map looks the same after
-recompile" is the priority. Runs from `converge --iterate N` and `estimate --recompile-refine N`.
+- **RecompileRefiner** *(developer-only)* — closed-loop `inject → q3map2 recompile → pair texels
+in world space (27-cell voxel hash) → residual-driven intensity + position adjustment → keep
+best iteration`. Used by the development team to refine the algorithm itself. Normal workflow does
+NOT require q3map2. Runs from `converge --iterate N` and `estimate --dev-validate N`.
 - **TexelFetchAuditor** — three independent correctness checks on every emitted sample:
 atlas round-trip, barycentric inversion round-trip, and planar `lightmapVecs` forward-map
 cross-check (skipped when vectors are inconsistent with vertex lmUVs, common on synthetic

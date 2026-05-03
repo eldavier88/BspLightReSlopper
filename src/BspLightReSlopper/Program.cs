@@ -50,13 +50,13 @@ namespace BspLightReSlopper
             Console.WriteLine("usage: bsplrs <command> [options]");
             Console.WriteLine();
             Console.WriteLine("commands:");
-            Console.WriteLine("  estimate    --assets <dir> --bsp <path | path.pk3!maps/foo.bsp>");
+            Console.WriteLine("  estimate    --bsp <path | path.pk3!maps/foo.bsp> [--assets <dir>]");
             Console.WriteLine("              [-o <out.ent>] [--log <log>] [--no-vis]");
             Console.WriteLine("              [--max-samples N] [--pivots N] [--max-lights N] [--seed N]");
             Console.WriteLine("              [--half-lambert] [--infer-angle-model]");
             Console.WriteLine("              [--minimize-lights] [--minimize-lights-tolerance F]");
             Console.WriteLine("              [--refine-lights] [--refine-passes N] [--refine-step U]");
-            Console.WriteLine("              [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>");
+            Console.WriteLine("              [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>");
             Console.WriteLine("               [--game jk2|ja|quake3] [--refine-timeout-mins N]]");
             Console.WriteLine("              [--no-bounce-suppress] [--no-classify] [--no-sun] [--emit-sky-shader]");
             Console.WriteLine();

@@ -137,12 +137,14 @@ Values like **“fast: likely-on”** are **educated guesses** from BSP/lightmap
 | `bsplrs estimate` log | comparison vs entity lump when present |
 | `bsplrs converge` → `convergence.md` | perceptual MSE/RMSE after recompile, forward SSE |
 | Training CSV | recall, precision, compile-axis flags, inferred heuristics |
-| `bsplrs estimate --recompile-refine N` log | per-iteration MSE trace, best iteration |
+| `bsplrs estimate --dev-validate N` log | per-iteration MSE trace, best iteration |
 | `bsplrs converge --iterate N` row | iterated? cell + final MSE/lights after RecompileRefiner |
 
 ## RecompileRefiner (closed-loop “look the same”)
 
-The RecompileRefiner (`Metrics/RecompileRefiner.cs`, used by `converge --iterate` and `estimate --recompile-refine`) does the following per iteration:
+The RecompileRefiner (`Metrics/RecompileRefiner.cs`, used internally by `converge --iterate` and
+`estimate --dev-validate`) is a **developer-only** tool for algorithm validation. It does the
+following per iteration:
 
 1. **Inject** the current candidate lights into the reference `.map`.
 2. **Recompile** via `q3map2` with heuristically inferred settings.
