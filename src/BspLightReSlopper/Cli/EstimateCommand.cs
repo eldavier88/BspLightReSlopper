@@ -146,7 +146,7 @@ namespace BspLightReSlopper.Cli
                 HalfLambert = halfLambert,
                 EnvelopeMultiplier = envMult,
                 RoomPrior = roomDetect,
-                JointRefitL1Penalty = args.FlagOrDefault("disambiguate-overlap", "no-disambiguate-overlap", true) ? 5.0f : 0.0f,
+                JointRefitL1Penalty = args.FlagOrDefault("disambiguate-overlap", "no-disambiguate-overlap", true) ? 0.0f : 0.0f,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");

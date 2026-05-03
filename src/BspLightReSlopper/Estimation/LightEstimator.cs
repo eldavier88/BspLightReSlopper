@@ -278,12 +278,6 @@ namespace BspLightReSlopper.Estimation
             if (options.DetectBlowouts)
             {
                 blowResult = BlowoutDetector.Detect(samples, log: log);
-                foreach (var seed in blowResult.PointCandidates)
-                {
-                    lights.Add(seed);
-                    lightOrigins.Add(seed.Origin);
-                    lightIntensities.Add(seed.Color * seed.Intensity);
-                }
                 // Mask blown texels out of the LSQ residuals: zero them so they contribute
                 // nothing to subsequent fits. Their original brightness is unrecoverable
                 // (clipped at compile time), so leaving them in just adds noise.
@@ -294,21 +288,15 @@ namespace BspLightReSlopper.Estimation
                         if (blowResult.BlownMask[i]) { rR[i] = 0; rG[i] = 0; rB[i] = 0; }
                     }
                 }
-                // Subtract seeded lights' predicted contribution from the (de-blown) residual
-                // so the greedy peel doesn't try to fit them again.
-                if (blowResult.PointCandidates.Count > 0)
-                {
-                    var emptyClusters = new int[n];
-                    foreach (var seed in blowResult.PointCandidates)
-                    {
-                        ApplyContribution(seed.Origin, seed.Color * seed.Intensity,
-                            px, py, pz, nx, ny, nz, rR, rG, rB, emptyClusters,
-                            n, options.Fade * options.Fade,
-                            sign: -1f, countSupporting: false, supportingFraction: 0f,
-                            halfLambert: options.HalfLambert,
-                            vis: null, candCluster: 0);
-                    }
-                }
+                // Blowout seed positions are added as TRIANGULATION CANDIDATES with a high
+                // boost, NOT as pre-accepted lights. Pre-accepting 200+ seeds causes the
+                // JointRefit GS coordinate descent to degenerate (K=200+ → off-diagonal
+                // coupling dominates → all lights driven to zero). The greedy peel instead
+                // discovers blowout lights organically by fitting against the non-blown
+                // boundary texels around each cluster (which carry real brightness signal).
+                // JointRefit then operates on only the ~30-60 greedy-accepted lights — a
+                // well-conditioned problem for Gauss-Seidel.
+                // NOTE: blowout seeds are added to triangulationSeeds below after triangulation runs.
             }
 
             // ---- Phase E2 / H3 pre-pass: geometric triangulation. Detect surface
@@ -331,6 +319,17 @@ namespace BspLightReSlopper.Estimation
                     blownClusters: blowResult?.Clusters);
                 foreach (var seed in triResult.Seeds) triangulationSeeds.Add(seed.Position);
             }
+            // Add blowout seed positions as high-priority triangulation candidates.
+            // The greedy peel will score these against boundary texels (non-blown) and
+            // accept them if they explain energy. The TriangulationSeedBoost ensures
+            // these positions get preferential treatment in the candidate scoring.
+            if (blowResult?.PointCandidates != null)
+            {
+                foreach (var seed in blowResult.PointCandidates)
+                    triangulationSeeds.Add(seed.Origin);
+                if (blowResult.PointCandidates.Count > 0)
+                    log?.Info($"  blowout-seeds-as-candidates: {blowResult.PointCandidates.Count} blowout positions added to triangulation pool");
+            }
 
             float initialEnergy = SumSq(rR, rG, rB);
             float currentEnergy = initialEnergy;
@@ -346,15 +345,6 @@ namespace BspLightReSlopper.Estimation
             // Track how many lights are placed in each room.
             int numRooms = options.RoomPrior?.Rooms.Count ?? 0;
             var roomLightCounts = new int[numRooms];
-            // Seed lights count towards room budgets.
-            foreach (var seed in blowResult?.PointCandidates ?? Enumerable.Empty<EstimatedLight>())
-            {
-                if (options.RoomPrior != null)
-                {
-                    int rIdx = options.RoomPrior.FindRoomIndex(seed.Origin);
-                    if (rIdx >= 0) roomLightCounts[rIdx]++;
-                }
-            }
 
             for (int round = 0; round < options.MaxLights; round++)
             {
@@ -615,16 +605,26 @@ namespace BspLightReSlopper.Estimation
             // restores energy-conserving intensity assignment.
             if (options.JointRefitAfter && lights.Count > 0)
             {
-                // Reconstruct original residuals (current = original - Σ subtractions). Easier
-                // to recompute from the source samples directly.
+                // Reconstruct residuals from source samples, applying the blown mask so
+                // clipped saturated texels (all ~1.0) don't compete against 200+ seeds and
+                // drive the GS coordinate descent to zero for all lights.
+                var blownMask = blowResult?.BlownMask;
                 for (int i = 0; i < n; i++)
                 {
-                    rR[i] = samples[i].Observed.X;
-                    rG[i] = samples[i].Observed.Y;
-                    rB[i] = samples[i].Observed.Z;
+                    if (blownMask != null && blownMask[i])
+                    {
+                        rR[i] = 0; rG[i] = 0; rB[i] = 0;
+                    }
+                    else
+                    {
+                        rR[i] = samples[i].Observed.X;
+                        rG[i] = samples[i].Observed.Y;
+                        rB[i] = samples[i].Observed.Z;
+                    }
                 }
                 JointRefit(lightOrigins, lightIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
                     fade2, options.MaxIntensityCap, options.HalfLambert, options.JointRefitL1Penalty, log);
+
 
                 if (options.JointRefitL1Penalty > 0)
                 {
@@ -648,12 +648,18 @@ namespace BspLightReSlopper.Estimation
                         lightOrigins = nonzeroOrigins;
                         lightIntensities = nonzeroIntensities;
                         
-                        // Restore rR, rG, rB to original observed before the unpenalized refit
+                        // Restore rR, rG, rB to blown-masked observed before the unpenalized refit
+                        var blownMaskL = blowResult?.BlownMask;
                         for (int i = 0; i < n; i++)
                         {
-                            rR[i] = samples[i].Observed.X;
-                            rG[i] = samples[i].Observed.Y;
-                            rB[i] = samples[i].Observed.Z;
+                            if (blownMaskL != null && blownMaskL[i])
+                            { rR[i] = 0; rG[i] = 0; rB[i] = 0; }
+                            else
+                            {
+                                rR[i] = samples[i].Observed.X;
+                                rG[i] = samples[i].Observed.Y;
+                                rB[i] = samples[i].Observed.Z;
+                            }
                         }
                         JointRefit(lightOrigins, lightIntensities, px, py, pz, nx, ny, nz, rR, rG, rB, n,
                             fade2, options.MaxIntensityCap, options.HalfLambert, 0.0f, log);
@@ -661,13 +667,23 @@ namespace BspLightReSlopper.Estimation
                 }
 
                 // Replace per-light intensities with refit values.
+                // Also prune lights that JointRefit drove to zero: blowout seeds whose
+                // blown texels were masked have no residual signal → JointRefit assigns
+                // them zero intensity. Keeping zeros poisons the median calibration
+                // (median=0 → scale=1 → all lights output near-zero → minimize-lights kills
+                // everything). Remove them here so the calibration sees only real lights.
+                var prunedLights = new List<EstimatedLight>(lights.Count);
+                var prunedOrigins = new List<Vector3>(lights.Count);
+                var prunedIntensities = new List<Vector3>(lights.Count);
+                int zeroCount = 0;
                 for (int li = 0; li < lights.Count; li++)
                 {
                     Vector3 I = lightIntensities[li];
                     float scalar = MathF.Max(I.X, MathF.Max(I.Y, I.Z));
-                    Vector3 chroma = scalar > 0 ? I / scalar : Vector3.One;
+                    if (scalar < 1e-3f) { zeroCount++; continue; } // zeroed by JointRefit — prune
+                    Vector3 chroma = I / scalar;
                     var prior = lights[li];
-                    lights[li] = new EstimatedLight
+                    prunedLights.Add(new EstimatedLight
                     {
                         Origin = prior.Origin,
                         Color = chroma,
@@ -677,10 +693,18 @@ namespace BspLightReSlopper.Estimation
                         ResidualEnergyExplainedFraction = prior.ResidualEnergyExplainedFraction,
                         Method = prior.Method + "+jointrefit",
                         BlownOut = prior.BlownOut,
-                    };
+                    });
+                    prunedOrigins.Add(prior.Origin);
+                    prunedIntensities.Add(I);
                 }
+                if (zeroCount > 0)
+                    log?.Info($"  jointrefit-prune: {zeroCount} zero-intensity lights removed ({prunedLights.Count} surviving)");
+                lights = prunedLights;
+                lightOrigins = prunedOrigins;
+                lightIntensities = prunedIntensities;
                 currentEnergy = SumSq(rR, rG, rB);
             }
+
 
             // ---- 8. Merge nearby duplicates + cull weak lights ----
             if (options.MergeNearbyAfter && lights.Count > 1)
@@ -695,11 +719,17 @@ namespace BspLightReSlopper.Estimation
                     // positions properly. Reset residuals to the original samples first.
                     if (options.JointRefitAfter)
                     {
+                        var blownMask2 = blowResult?.BlownMask;
                         for (int i = 0; i < n; i++)
                         {
-                            rR[i] = samples[i].Observed.X;
-                            rG[i] = samples[i].Observed.Y;
-                            rB[i] = samples[i].Observed.Z;
+                            if (blownMask2 != null && blownMask2[i])
+                            { rR[i] = 0; rG[i] = 0; rB[i] = 0; }
+                            else
+                            {
+                                rR[i] = samples[i].Observed.X;
+                                rG[i] = samples[i].Observed.Y;
+                                rB[i] = samples[i].Observed.Z;
+                            }
                         }
                         var mergedOrigins = new List<Vector3>(lights.Count);
                         var mergedIntensities = new List<Vector3>(lights.Count);

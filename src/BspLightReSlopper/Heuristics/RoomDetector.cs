@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
@@ -8,10 +8,10 @@ using BspLightReSlopper.Sampling;
 namespace BspLightReSlopper.Heuristics
 {
     /// <summary>
-    /// Phase P1.4 — semantic room detection. Clusters BSP leafs into connected rooms via
+    /// Phase P1.4 ΓÇö semantic room detection. Clusters BSP leafs into connected rooms via
     /// portal adjacency, classifies each room by geometry and dominant shader, and
-    /// applies domain-specific lighting heuristics (corridor → linear strips, arena → grid,
-    /// small room → single central light, cave → warm entrance lights).
+    /// applies domain-specific lighting heuristics (corridor ΓåÆ linear strips, arena ΓåÆ grid,
+    /// small room ΓåÆ single central light, cave ΓåÆ warm entrance lights).
     ///
     /// <para>The room list is fed into <see cref="LightEstimator"/> as seed candidates
     /// and into the Bayesian prior for light count inference.</para>
@@ -76,7 +76,7 @@ namespace BspLightReSlopper.Heuristics
             int nLeafs = bsp.Leafs.Count;
             // Degenerate-BSP guard: synthetic / minimal BSPs (used by tests and edge-case
             // small maps) may ship without a node tree, leafs, or planes. Without those
-            // we cannot do leaf classification — return an empty room set instead of
+            // we cannot do leaf classification ΓÇö return an empty room set instead of
             // crashing in FindLeaf().
             if (nLeafs == 0 || bsp.Nodes.Count == 0 || bsp.Planes.Count == 0)
             {
@@ -191,7 +191,7 @@ namespace BspLightReSlopper.Heuristics
             int node = 0;
             while (node >= 0)
             {
-                if (node >= bsp.Nodes.Count) return -1; // malformed BSP — abort traversal
+                if (node >= bsp.Nodes.Count) return -1; // malformed BSP ΓÇö abort traversal
                 var n = bsp.Nodes[node];
                 if (n.PlaneIndex < 0 || n.PlaneIndex >= bsp.Planes.Count) return -1;
                 var plane = bsp.Planes[n.PlaneIndex];
