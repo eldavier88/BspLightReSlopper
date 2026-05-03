@@ -105,6 +105,6 @@ namespace BspLightReSlopper
 
     internal static class Version
     {
-        public const string String = "0.2.0";
+        public const string String = "0.3.0";
     }
 }

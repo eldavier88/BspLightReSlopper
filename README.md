@@ -15,6 +15,7 @@ bsplrs estimate --assets <asset-dir> --bsp <path | path.pk3!maps/foo.bsp>
                 [--half-lambert] [--infer-angle-model]
                 [--minimize-lights] [--minimize-lights-tolerance F]
                 [--refine-lights] [--refine-passes N] [--refine-step U]
+                [--recompile-refine N --map <src.map> --q3map2 <exe> --base-path <dir>]
 ```
 
 Inputs:
@@ -124,24 +125,39 @@ loose .bsp / archive.pk3!maps/foo.bsp
             ┌─────────────────────────────────────────────┤
             ▼                                             ▼
        SurfaceUnpacker                                  BspVis
-       (planar / tri-soup;                              (PVS bit-lookup)
-        patches deferred)
+       (planar / tri-soup / patches)                    (PVS bit-lookup)
             │
             ▼
        TexelSampler ──► [TexelSample{World,Normal,Observed,Cluster,...}, ...]
-            │                                             │
-            ▼                                             │
-       LightEstimator ◄─────────────────────────────────────┘
-       │   bright-pivot RANSAC seeded from top-quantile residual luma,
-       │   localized per-channel non-negative LSQ inside a 256u support
-       │   radius, pattern-search refinement, PVS-gated to skip texels
-       │   the candidate's leaf can't see, residual-peeling iteration,
-       │   joint Gauss-Seidel refit on positions-fixed at the end.
+            │
+            ├──────► TexelFetchAuditor (diagnostic: atlas round-trip,
+            │                            barycentric inversion, planar lmVec check)
+            │
+            ├──────► BlowoutDetector
+            │        (channel-aware saturation → dilate mask → multi-distance
+            │         candidates from centroid; blown texels excluded from LSQ)
+            │
+            ▼
+       LightEstimator
+       │   ┌─ GeometricTriangulator ──► triangulated seeds from surface-bright
+       │   │   peaks (skipping blown texels) + blown-boundary ray-pair peaks
+       │   │
+       │   └─ Bright-pivot RANSAC seeded from top-quantile residual luma,
+       │       localized per-channel non-negative LSQ inside 256u support
+       │       radius, pattern-search refinement, PVS-gated visibility,
+       │       residual-peeling iteration, joint Gauss-Seidel refit.
+       │
+       ├─► Optional: MinimizeLightCountGreedy (L0 budget, SSE tolerance)
+       ├─► Optional: PerceptualRefiner (photometric coordinate descent, no compile)
+       ├─► Optional: RecompileRefiner (inject → q3map2 recompile → pair texels in
+       │   world space → residual-driven per-light intensity+position adjustment,
+       │   iterate, keep best-iteration lights; "match the look" priority)
+       │
        ▼
        EntFileWriter  ──►  <bsp>.ent
        Logger         ──►  <bsp>.log + stdout
 
-(Phase B refinement loop adds: MapFileParser → RandomLightScatterer →
+(Phase B training loop: MapFileParser → RandomLightScatterer →
  Q3Map2Wrapper(-bsp/-vis/-light with randomized settings matrix) →
  estimator → GreedyMatcher → train.csv)
 ```
@@ -213,7 +229,29 @@ dotnet build -c Release
 |-------|------|-----|----------------------------------------------------------------|
 | A     | yes  | `phase-a` | Initial estimator + verify harness on JK2 base maps      |
 | B     | yes  | `phase-b` | Refinement loop: scatter → recompile → estimate → score  |
-| C     | in progress | — | Visibility-aware (PVS) estimator + polish work            |
+| C     | yes  | — | Visibility-aware (PVS) estimator + polish work              |
+| D     | yes  | — | Blowout-aware estimation, recompile-refine loop, texel audit  |
+
+**Phase D highlights (H2–H4):**
+
+- **BlowoutDetector** — channel-aware saturation (any channel ≥ 254), 1-ring dilation to
+clean contaminated neighbours, multi-distance candidates (0.6× / 1.0× / 1.6× offset sweep).
+Blown texels are excluded from the LSQ residual buffer, triangulation peak-finding, and all
+perceptual-loss scoring.
+- **GeometricTriangulator** — now excludes saturated texels from peak detection and
+*includes* blown-cluster boundary peaks (brightest non-saturated neighbour, projected in the
+outward normal direction) as additional intersection rays. This recovers directional signal
+from clipped regions without trusting their intensities.
+- **RecompileRefiner** — closed-loop `inject → q3map2 recompile → pair texels in world space
+(27-cell voxel hash) → residual-driven intensity + position adjustment → keep best iteration`.
+The objective is **perceptual MSE** (not entity-list match), so "map looks the same after
+recompile" is the priority. Runs from `converge --iterate N` and `estimate --recompile-refine N`.
+- **TexelFetchAuditor** — three independent correctness checks on every emitted sample:
+atlas round-trip, barycentric inversion round-trip, and planar `lightmapVecs` forward-map
+cross-check (skipped when vectors are inconsistent with vertex lmUVs, common on synthetic
+BSPs). Duplicate detection and per-surface coverage stats included.
+- **Tightened `FindContaining`** — "deepest-inside" triangle selection instead of
+first-match-wins, fixing overlap artefacts on tessellated patches and tri-soup.
 
 End-to-end benchmark on 7 Jedi Outcast base maps, 256u match tolerance:
 

@@ -103,6 +103,26 @@ Used for **refinement** and **light-count minimization** without recompiling eve
 
 ---
 
+## Blowout handling (saturation → mask → exclusion)
+
+Lightmaps store **byte** values (0–255). When a real light is very close to a surface or very bright, one or more RGB channels clip at **255**. Those clipped texels carry **no usable intensity signal** — the true radiance could be 1×, 2×, or 10× higher than 255 and the byte looks identical. Guessing intensity from saturated pixels is dangerous.
+
+**Three-tier handling:**
+
+1. **Saturated** — any channel ≥ 254. The raw intensity is *probably* clipped. Flagged but still considered by the estimator if not part of a flat block.
+2. **Blown** — a 4-connected cluster of saturated texels whose **border contrast is not steep enough** to be a single bright pixel (the "flat flash" pattern). These are almost certainly clipped and their neighbours are contaminated. The estimator **excludes blown texels from the LSQ residual buffer**, from triangulation peak detection, and from all perceptual-loss scoring. They are replaced by the forward model during refinement.
+3. **Dilation** — a 1-ring neighbourhood around every blown cluster is also masked out, because the light bleed from an over-bright source contaminates nearby non-saturated pixels too.
+
+When a blown cluster is detected, the tool emits **multiple light candidates** at different distances from the surface (0.6×, 1.0×, 1.6× the normal-offset heuristic). The estimator's downstream joint refit and merge steps pick whichever distance best explains the *non*-blown surrounding pixels, rather than being anchored to one potentially-wrong offset.
+
+---
+
+## Geometric triangulation with blown-boundary peaks
+
+`GeometricTriangulator` uses ray-pair intersections from bright surface peaks to find light directions. Saturated texels are **skipped** during peak detection (their apparent brightness is ceiling-limited, not real). However, the **boundary** of a blown cluster — the brightest non-saturated texel just outside the dilation ring — retains a *directional* signal: the surface normal and the vector from that texel toward the cluster centroid point toward the real light source. These boundary peaks are added as **extra rays** to the triangulation pool, weighted by their (non-clipped) observed brightness. This recovers geometric hints from blown areas without trusting their intensities.
+
+---
+
 ## Heuristic compile inference (gamma, `-fast`, etc.)
 
 Values like **“fast: likely-on”** are **educated guesses** from BSP/lightmap statistics (e.g. hard shadow edges vs soft penumbra). They guide **envelope discard** and **recompile** defaults — not cryptographic proof of how the map was originally built.
