@@ -1,46 +1,60 @@
 using System;
 using System.IO;
+using Serilog;
+using Serilog.Core;
 
 namespace BspLightReSlopper.Util
 {
     /// <summary>
-    /// Mirrors writes to <see cref="Console.Out"/> and an optional log file. Phase A keeps this
-    /// dead simple; Phase A13 will extend it with timestamps and section delimiters.
+    /// Structured-logging facade backed by Serilog. Phase P0 migration from the
+    /// hand-rolled TextWriter mirror. Keeps the same public API so existing callers
+    /// (EstimateCommand, LightEstimator, RecompileRefiner, etc.) compile unchanged.
     /// </summary>
     public sealed class Logger : IDisposable
     {
-        private readonly TextWriter _console;
-        private readonly StreamWriter? _file;
+        private readonly Serilog.ILogger _log;
+        private readonly LoggerConfiguration? _config;
+        private readonly Serilog.Core.Logger? _serilogRoot;
         private bool _disposed;
 
         public Logger(TextWriter? console = null, string? logPath = null)
         {
-            _console = console ?? Console.Out;
+            _config = new LoggerConfiguration()
+                .MinimumLevel.Debug()
+                .WriteTo.Console(outputTemplate: "{Message:lj}{NewLine}", standardErrorFromLevel: Serilog.Events.LogEventLevel.Error);
+
             if (!string.IsNullOrEmpty(logPath))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(logPath))!);
-                _file = new StreamWriter(logPath, append: false) { AutoFlush = true };
+                _config.WriteTo.File(
+                    logPath,
+                    outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}",
+                    flushToDiskInterval: TimeSpan.FromSeconds(1));
             }
+
+            _serilogRoot = _config.CreateLogger();
+            _log = _serilogRoot;
         }
 
         public void Info(string message)
         {
-            _console.WriteLine(message);
-            _file?.WriteLine(message);
+            _log.Information(message);
         }
 
-        public void Warn(string message) => Info("warn: " + message);
+        public void Warn(string message) => _log.Warning(message);
 
-        public void Error(string message) => Info("error: " + message);
+        public void Error(string message) => _log.Error(message);
 
-        public void Section(string name) => Info("=== " + name + " ===");
+        public void Section(string name) => _log.Information("=== {Section} ===", name);
+
+        /// <summary>Structured diagnostic; used by new P0+ components.</summary>
+        public void Debug(string message) => _log.Debug(message);
 
         public void Dispose()
         {
             if (_disposed) return;
             _disposed = true;
-            _file?.Flush();
-            _file?.Dispose();
+            _serilogRoot?.Dispose();
         }
     }
 }
