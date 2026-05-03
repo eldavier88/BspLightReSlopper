@@ -18,6 +18,17 @@ namespace BspLightReSlopper.Util
         private bool _disposed;
 
         public Logger(TextWriter? console = null, string? logPath = null)
+            : this(console, logPath, extraSink: null)
+        {
+        }
+
+        /// <summary>
+        /// Create a logger with an optional extra <see cref="ILogEventSink"/>. The extra
+        /// sink receives every log event in addition to console + optional file. Used by
+        /// the Desktop GUI to pipe live log lines into the in-app log viewer without
+        /// touching any existing callers (LightEstimator, EstimateCommand, etc.).
+        /// </summary>
+        public Logger(TextWriter? console, string? logPath, ILogEventSink? extraSink)
         {
             _config = new LoggerConfiguration()
                 .MinimumLevel.Debug()
@@ -30,6 +41,11 @@ namespace BspLightReSlopper.Util
                     logPath,
                     outputTemplate: "{Timestamp:yyyy-MM-dd HH:mm:ss.fff} [{Level:u3}] {Message:lj}{NewLine}",
                     flushToDiskInterval: TimeSpan.FromSeconds(1));
+            }
+
+            if (extraSink != null)
+            {
+                _config.WriteTo.Sink(extraSink);
             }
 
             _serilogRoot = _config.CreateLogger();

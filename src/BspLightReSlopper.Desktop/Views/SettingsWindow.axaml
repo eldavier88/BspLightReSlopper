@@ -1,0 +1,59 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:BspLightReSlopper.Desktop.ViewModels"
+        x:Class="BspLightReSlopper.Desktop.Views.SettingsWindow"
+        x:DataType="vm:SettingsViewModel"
+        Title="BspLightReSlopper – Settings"
+        Width="640" Height="380"
+        WindowStartupLocation="CenterOwner"
+        CanResize="False">
+  <Grid Margin="20" RowDefinitions="Auto,*,Auto">
+    <TextBlock Grid.Row="0" Text="External tooling for recompile-refine"
+               FontSize="16" FontWeight="Bold" Margin="0,0,0,16" Foreground="#e0e0e0"/>
+
+    <StackPanel Grid.Row="1" Spacing="14">
+      <!-- q3map2 -->
+      <StackPanel Spacing="4">
+        <TextBlock Text="q3map2 executable" FontWeight="SemiBold" Foreground="#cccccc"/>
+        <Grid ColumnDefinitions="*,Auto,Auto">
+          <TextBox Grid.Column="0" Text="{Binding Q3Map2Path}" Watermark="C:\path\to\q3map2.exe"/>
+          <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseQ3Map2Command}" Margin="8,0,0,0"/>
+          <TextBlock Grid.Column="2" Text="{Binding Q3Map2Status}" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#888888"/>
+        </Grid>
+      </StackPanel>
+
+      <!-- Base path -->
+      <StackPanel Spacing="4">
+        <TextBlock Text="Game base path (fs_basepath)" FontWeight="SemiBold" Foreground="#cccccc"/>
+        <Grid ColumnDefinitions="*,Auto,Auto">
+          <TextBox Grid.Column="0" Text="{Binding BasePath}" Watermark="C:\Games\Jedi Outcast\GameData"/>
+          <Button Grid.Column="1" Content="Browse..." Command="{Binding BrowseBasePathCommand}" Margin="8,0,0,0"/>
+          <TextBlock Grid.Column="2" Text="{Binding BasePathStatus}" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="#888888"/>
+        </Grid>
+        <TextBlock Text="Should contain a 'base/' subfolder with the .pk3s." Foreground="#888888" FontSize="11"/>
+      </StackPanel>
+
+      <!-- Game token -->
+      <StackPanel Spacing="4">
+        <TextBlock Text="Game token (-game flag)" FontWeight="SemiBold" Foreground="#cccccc"/>
+        <ComboBox SelectedItem="{Binding GameToken, Mode=TwoWay}" Width="140">
+          <ComboBoxItem Content="jk2"/>
+          <ComboBoxItem Content="jka"/>
+          <ComboBoxItem Content="quake3"/>
+          <ComboBoxItem Content="wolf"/>
+          <ComboBoxItem Content="et"/>
+        </ComboBox>
+      </StackPanel>
+
+      <Border Background="#2d2d30" CornerRadius="4" Padding="12">
+        <TextBlock Text="These settings are only required for the recompile-refine workflow. The estimator runs fine without them; recompile-refine controls will simply stay disabled."
+                   Foreground="#888888" FontSize="11" TextWrapping="Wrap"/>
+      </Border>
+    </StackPanel>
+
+    <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,16,0,0">
+      <Button Content="Cancel" Command="{Binding CancelCommand}"/>
+      <Button Content="Save" Command="{Binding SaveCommand}" Classes="accent"/>
+    </StackPanel>
+  </Grid>
+</Window>

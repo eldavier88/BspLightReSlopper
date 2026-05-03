@@ -1,98 +1,286 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:BspLightReSlopper.Desktop.ViewModels"
+        xmlns:svc="using:BspLightReSlopper.Desktop.Services"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        mc:Ignorable="d" d:DesignWidth="1200" d:DesignHeight="800"
+        mc:Ignorable="d" d:DesignWidth="1280" d:DesignHeight="800"
         x:Class="BspLightReSlopper.Desktop.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Title="BspLightReSlopper"
-        Width="1200" Height="800"
+        Width="1280" Height="800"
+        MinWidth="1024" MinHeight="640"
         WindowStartupLocation="CenterScreen">
 
   <Design.DataContext>
     <vm:MainWindowViewModel />
   </Design.DataContext>
 
-  <Grid RowDefinitions="Auto,*,Auto">
-    <!-- Toolbar -->
-    <Grid Grid.Row="0" Background="#1e1e1e" Height="48">
-      <Grid.ColumnDefinitions>
-        <ColumnDefinition Width="Auto"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition Width="Auto"/>
-      </Grid.ColumnDefinitions>
-      <TextBlock Grid.Column="0" Text="BspLightReSlopper" FontSize="18" FontWeight="Bold" VerticalAlignment="Center" Margin="16,0,0,0" Foreground="#e0e0e0"/>
-      <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" Margin="0,0,16,0" VerticalAlignment="Center">
-        <Button Content="Open BSP" Command="{Binding OpenBspCommand}" />
-        <Button Content="Export .ent" Command="{Binding ExportEntCommand}" IsEnabled="{Binding HasResults}" />
-      </StackPanel>
-    </Grid>
+  <Window.Styles>
+    <Style Selector="Expander">
+      <Setter Property="Background" Value="#2d2d30"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="Margin" Value="0,4"/>
+    </Style>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="FontSize" Value="13"/>
+      <Setter Property="Foreground" Value="#cccccc"/>
+    </Style>
+    <Style Selector="TextBlock.dim">
+      <Setter Property="Foreground" Value="#888888"/>
+      <Setter Property="FontSize" Value="11"/>
+    </Style>
+    <Style Selector="TextBlock.logSection">
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Foreground" Value="#4ec9b0"/>
+    </Style>
+    <Style Selector="TextBlock.logInfo">
+      <Setter Property="Foreground" Value="#dcdcdc"/>
+    </Style>
+    <Style Selector="TextBlock.logWarn">
+      <Setter Property="Foreground" Value="#dcdcaa"/>
+    </Style>
+    <Style Selector="TextBlock.logError">
+      <Setter Property="Foreground" Value="#f48771"/>
+    </Style>
+    <Style Selector="TextBlock.logDebug">
+      <Setter Property="Foreground" Value="#808080"/>
+    </Style>
+  </Window.Styles>
 
-    <!-- Main Content -->
-    <Grid Grid.Row="1" ColumnDefinitions="320,*">
-      <!-- Left Panel: Parameters & Results -->
+  <Grid RowDefinitions="Auto,*,Auto">
+    <!-- ====== Toolbar ====== -->
+    <Border Grid.Row="0" Background="#1e1e1e" Height="48" BorderBrush="#3e3e42" BorderThickness="0,0,0,1">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="16,0">
+          <TextBlock Text="BspLightReSlopper" FontSize="16" FontWeight="Bold" Foreground="#e0e0e0" VerticalAlignment="Center"/>
+          <Button Content="Open BSP..." Command="{Binding OpenBspCommand}"/>
+          <Button Content="Recent" >
+            <Button.Flyout>
+              <MenuFlyout ItemsSource="{Binding RecentFiles}">
+                <MenuFlyout.ItemTemplate>
+                  <DataTemplate>
+                    <MenuItem Header="{Binding}"
+                              Command="{Binding $parent[Window].((vm:MainWindowViewModel)DataContext).LoadRecentCommand}"
+                              CommandParameter="{Binding}"/>
+                  </DataTemplate>
+                </MenuFlyout.ItemTemplate>
+              </MenuFlyout>
+            </Button.Flyout>
+          </Button>
+          <Button Content="Settings..." Command="{Binding OpenSettingsCommand}"/>
+        </StackPanel>
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Spacing="8" Margin="16,0">
+          <Button Content="Open .ent" Command="{Binding OpenEntFileCommand}" IsEnabled="{Binding HasResults}"/>
+          <Button Content="Open log" Command="{Binding OpenLogFileCommand}" IsEnabled="{Binding HasResults}"/>
+          <Button Content="Export .ent..." Command="{Binding ExportEntCommand}" IsEnabled="{Binding HasResults}"/>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- ====== Main content ====== -->
+    <Grid Grid.Row="1" ColumnDefinitions="380,*">
+      <!-- Left: parameters & results -->
       <Border Grid.Column="0" Background="#252526" BorderBrush="#3e3e42" BorderThickness="0,0,1,0">
         <ScrollViewer>
-          <StackPanel Spacing="12" Margin="16">
-            <!-- Map Info -->
+          <StackPanel Spacing="8" Margin="12">
+            <!-- Map info -->
             <Border Background="#2d2d30" CornerRadius="4" Padding="12">
               <StackPanel Spacing="4">
-                <TextBlock Text="Map Info" FontWeight="Bold" FontSize="14" Foreground="#cccccc"/>
-                <TextBlock Text="{Binding MapName}" Foreground="#aaaaaa" TextTrimming="CharacterEllipsis"/>
-                <TextBlock Text="{Binding MapFormat}" Foreground="#888888" FontSize="12"/>
-                <TextBlock Text="{Binding SurfaceCount}" Foreground="#888888" FontSize="12"/>
+                <TextBlock Text="Map" Classes="section"/>
+                <TextBlock Text="{Binding MapName}" Foreground="#dcdcdc" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding MapFormat}" Classes="dim"/>
+                <TextBlock Text="{Binding SurfaceCount}" Classes="dim"/>
               </StackPanel>
             </Border>
 
-            <!-- Parameters -->
+            <!-- Assets directory -->
             <Border Background="#2d2d30" CornerRadius="4" Padding="12">
-              <StackPanel Spacing="8">
-                <TextBlock Text="Parameters" FontWeight="Bold" FontSize="14" Foreground="#cccccc"/>
-                <CheckBox Content="Half-Lambert" IsChecked="{Binding HalfLambert}" />
-                <CheckBox Content="No Bounce Suppress" IsChecked="{Binding NoBounceSuppress}" />
-                <CheckBox Content="No Vis" IsChecked="{Binding NoVis}" />
-                <NumericUpDown Value="{Binding MaxLights}" Minimum="1" Maximum="1024" FormatString="0" Watermark="Max Lights"/>
-                <NumericUpDown Value="{Binding MaxSamples}" Minimum="1000" Maximum="1000000" FormatString="0" Watermark="Max Samples"/>
-                <NumericUpDown Value="{Binding Pivots}" Minimum="10" Maximum="5000" FormatString="0" Watermark="Pivots"/>
-                <Button Content="Auto-Detect" Command="{Binding AutoDetectCommand}" HorizontalAlignment="Stretch"/>
+              <StackPanel Spacing="6">
+                <TextBlock Text="Asset directory (PK3 stack)" Classes="section"/>
+                <TextBlock Text="{Binding AssetsStatus}" Classes="dim" TextWrapping="Wrap"/>
+                <StackPanel Orientation="Horizontal" Spacing="6">
+                  <Button Content="Browse..." Command="{Binding BrowseAssetsCommand}"/>
+                  <Button Content="Clear" Command="{Binding ClearAssetsCommand}"/>
+                </StackPanel>
               </StackPanel>
             </Border>
+
+            <!-- Sampling -->
+            <Expander Header="Sampling &amp; estimator" IsExpanded="True">
+              <StackPanel Spacing="8" Margin="12">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto,Auto">
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="Max lights" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Row="0" Grid.Column="1" Value="{Binding MaxLights}" Minimum="1" Maximum="1024" FormatString="0" Width="120"/>
+                  <TextBlock Grid.Row="1" Grid.Column="0" Text="Max samples" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Row="1" Grid.Column="1" Value="{Binding MaxSamples}" Minimum="1000" Maximum="2000000" Increment="10000" FormatString="0" Width="120"/>
+                  <TextBlock Grid.Row="2" Grid.Column="0" Text="Pivots / round" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Row="2" Grid.Column="1" Value="{Binding Pivots}" Minimum="10" Maximum="5000" Increment="50" FormatString="0" Width="120"/>
+                  <TextBlock Grid.Row="3" Grid.Column="0" Text="Random seed" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Row="3" Grid.Column="1" Value="{Binding Seed}" Minimum="0" Maximum="999999" FormatString="0" Width="120"/>
+                </Grid>
+                <CheckBox Content="Half-Lambert (q3map2 -lightanglehl)" IsChecked="{Binding HalfLambert}"/>
+                <CheckBox Content="Auto-infer angle model from heuristics" IsChecked="{Binding InferAngleModel}"/>
+                <CheckBox Content="Disable PVS visibility (--no-vis)" IsChecked="{Binding NoVis}"/>
+                <Button Content="Auto-detect rooms → max-lights" Command="{Binding AutoDetectCommand}" HorizontalAlignment="Stretch"/>
+              </StackPanel>
+            </Expander>
+
+            <!-- Post-process -->
+            <Expander Header="Post-process" IsExpanded="False">
+              <StackPanel Spacing="8" Margin="12">
+                <CheckBox Content="Skip bounce suppression" IsChecked="{Binding NoBounceSuppress}"/>
+                <CheckBox Content="Minimize light count (greedy)" IsChecked="{Binding MinimizeLights}"/>
+                <Grid ColumnDefinitions="*,Auto" IsEnabled="{Binding MinimizeLights}">
+                  <TextBlock Grid.Column="0" Text="  tolerance" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding MinimizeLightsTolerance}" Minimum="0" Maximum="1" Increment="0.005" FormatString="0.000" Width="120"/>
+                </Grid>
+                <CheckBox Content="Photometric refine (forward SSE)" IsChecked="{Binding RefineLights}"/>
+                <Grid ColumnDefinitions="*,Auto" IsEnabled="{Binding RefineLights}">
+                  <TextBlock Grid.Column="0" Text="  passes" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding RefinePasses}" Minimum="1" Maximum="20" FormatString="0" Width="120"/>
+                </Grid>
+                <Grid ColumnDefinitions="*,Auto" IsEnabled="{Binding RefineLights}">
+                  <TextBlock Grid.Column="0" Text="  step (units)" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding RefineStep}" Minimum="1" Maximum="256" Increment="4" FormatString="0" Width="120"/>
+                </Grid>
+              </StackPanel>
+            </Expander>
+
+            <!-- Output -->
+            <Expander Header="Output / classification" IsExpanded="False">
+              <StackPanel Spacing="8" Margin="12">
+                <CheckBox Content="Skip type classification" IsChecked="{Binding NoClassify}"/>
+                <CheckBox Content="Skip sun detection" IsChecked="{Binding NoSun}"/>
+                <CheckBox Content="Emit .sky.shader for detected sun" IsChecked="{Binding EmitSkyShader}"/>
+              </StackPanel>
+            </Expander>
+
+            <!-- Advanced: recompile-refine -->
+            <Expander Header="Advanced – recompile-refine" IsExpanded="False">
+              <StackPanel Spacing="8" Margin="12">
+                <TextBlock Text="Drives a closed-loop q3map2 recompile to minimise perceptual MSE. Requires Settings → q3map2 + base path + a reference .map." Classes="dim" TextWrapping="Wrap"/>
+                <Border Background="#3a3a3d" CornerRadius="4" Padding="8" IsVisible="{Binding !HasQ3Map2Configured}">
+                  <TextBlock Text="⚠ q3map2 / base path not configured. Open Settings to enable." Foreground="#dcdcaa" FontSize="11"/>
+                </Border>
+                <Grid ColumnDefinitions="*,Auto" IsEnabled="{Binding HasQ3Map2Configured}">
+                  <TextBlock Grid.Column="0" Text="Iterations (0 = off)" VerticalAlignment="Center"/>
+                  <NumericUpDown Grid.Column="1" Value="{Binding RecompileRefineIterations}" Minimum="0" Maximum="20" FormatString="0" Width="120"/>
+                </Grid>
+                <StackPanel Spacing="4" IsEnabled="{Binding HasQ3Map2Configured}">
+                  <TextBlock Text="Reference .map path" />
+                  <Grid ColumnDefinitions="*,Auto">
+                    <TextBox Grid.Column="0" Text="{Binding RecompileRefineMapPath}" Watermark="C:\path\to\reference.map"/>
+                    <Button Grid.Column="1" Content="..." Command="{Binding BrowseRefineMapCommand}" Margin="6,0,0,0"/>
+                  </Grid>
+                </StackPanel>
+              </StackPanel>
+            </Expander>
+
+            <!-- Run controls -->
+            <StackPanel Spacing="6" Margin="0,8,0,0">
+              <Button Content="Run estimator" Command="{Binding RunEstimatorCommand}"
+                      IsEnabled="{Binding CanRun}" HorizontalAlignment="Stretch" Classes="accent"/>
+              <Button Content="Cancel" Command="{Binding CancelRunCommand}"
+                      IsEnabled="{Binding CanCancel}" HorizontalAlignment="Stretch"/>
+            </StackPanel>
 
             <!-- Progress -->
             <Border Background="#2d2d30" CornerRadius="4" Padding="12" IsVisible="{Binding IsRunning}">
-              <StackPanel Spacing="8">
-                <TextBlock Text="Running..." FontWeight="Bold" Foreground="#cccccc"/>
-                <ProgressBar Value="{Binding Progress}" Maximum="100" />
-                <TextBlock Text="{Binding StatusText}" Foreground="#888888" FontSize="12" TextWrapping="Wrap"/>
+              <StackPanel Spacing="6">
+                <TextBlock Text="{Binding RunStage}" Foreground="#dcdcdc"/>
+                <ProgressBar Value="{Binding Progress}" Maximum="100"/>
               </StackPanel>
             </Border>
 
             <!-- Results -->
             <Border Background="#2d2d30" CornerRadius="4" Padding="12" IsVisible="{Binding HasResults}">
-              <StackPanel Spacing="8">
-                <TextBlock Text="Results" FontWeight="Bold" FontSize="14" Foreground="#cccccc"/>
-                <TextBlock Text="{Binding ResultSummary}" Foreground="#888888" FontSize="12"/>
-                <Button Content="Run Estimator" Command="{Binding RunEstimatorCommand}" HorizontalAlignment="Stretch" IsEnabled="{Binding !IsRunning}"/>
+              <StackPanel Spacing="6">
+                <TextBlock Text="Results" Classes="section"/>
+                <TextBlock Text="{Binding ResultSummary}" Foreground="#dcdcdc"/>
+                <TextBlock Text="{Binding ResultTypeBreakdown}" Classes="dim"/>
+                <TextBlock Text="{Binding ResultRuntime}" Classes="dim"/>
+                <TextBlock Text="{Binding ResultSunInfo}" Classes="dim" IsVisible="{Binding HasSun}" TextWrapping="Wrap"/>
+                <TextBlock Text="{Binding ResultGroundTruth}" Classes="dim" IsVisible="{Binding HasGroundTruth}" TextWrapping="Wrap"/>
               </StackPanel>
             </Border>
-            <Button Content="Run Estimator" Command="{Binding RunEstimatorCommand}" HorizontalAlignment="Stretch" IsEnabled="{Binding !IsRunning}" IsVisible="{Binding !HasResults}"/>
           </StackPanel>
         </ScrollViewer>
       </Border>
 
-      <!-- Right Panel: 3D Viewer -->
-      <Border Grid.Column="1" Background="#1e1e1e">
-        <Grid>
-          <TextBlock Text="Drop a .bsp file here or click Open BSP" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#666666" FontSize="16" IsVisible="{Binding !HasMapLoaded}"/>
-          <ContentControl Content="{Binding ViewerContent}" IsVisible="{Binding HasMapLoaded}" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
-        </Grid>
-      </Border>
+      <!-- Right: viewer + log -->
+      <Grid Grid.Column="1" RowDefinitions="Auto,*,Auto,Auto">
+        <!-- Viewer toolbar -->
+        <Border Grid.Row="0" Background="#252526" BorderBrush="#3e3e42" BorderThickness="0,0,0,1" Height="36">
+          <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="8,0">
+            <TextBlock Text="Mode:" Foreground="#aaaaaa" VerticalAlignment="Center"/>
+            <ComboBox Name="RenderModeCombo" Width="140" SelectedIndex="0">
+              <ComboBoxItem Content="Lightmap"/>
+              <ComboBoxItem Content="Shaded"/>
+              <ComboBoxItem Content="Wireframe"/>
+              <ComboBoxItem Content="Normals"/>
+            </ComboBox>
+            <Border Width="1" Background="#3e3e42" Margin="6,4"/>
+            <CheckBox Name="ShowLightsCheck" Content="Lights" IsChecked="True"/>
+            <CheckBox Name="ShowConesCheck" Content="Cones" IsChecked="True"/>
+            <CheckBox Name="ShowGtCheck" Content="Ground truth" IsChecked="True"/>
+            <Border Width="1" Background="#3e3e42" Margin="6,4"/>
+            <TextBlock Text="Overbright:" Foreground="#aaaaaa" VerticalAlignment="Center"/>
+            <Slider Name="OverbrightSlider" Width="120" Minimum="0.5" Maximum="6" Value="2.0"/>
+            <Button Name="FrameButton" Content="Frame"/>
+          </StackPanel>
+        </Border>
+
+        <Border Grid.Row="1" Background="#1e1e1e">
+          <Grid>
+            <TextBlock Text="Drop a .bsp file here or click 'Open BSP'"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="#666666" FontSize="16"
+                       IsVisible="{Binding !HasMapLoaded}"/>
+            <ContentControl Name="ViewerHost"
+                            HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                            IsVisible="{Binding HasMapLoaded}"/>
+          </Grid>
+        </Border>
+
+        <!-- Log viewer toggle -->
+        <Border Grid.Row="2" Background="#252526" BorderBrush="#3e3e42" BorderThickness="0,1,0,0">
+          <Grid ColumnDefinitions="Auto,*,Auto" Margin="8,4">
+            <ToggleButton Grid.Column="0" Content="Log" IsChecked="{Binding LogViewerExpanded}" />
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" Margin="12,0">
+              <CheckBox Content="Debug" IsChecked="{Binding LogFilterDebug}"/>
+              <CheckBox Content="Info" IsChecked="{Binding LogFilterInfo}"/>
+              <CheckBox Content="Warn" IsChecked="{Binding LogFilterWarn}"/>
+              <CheckBox Content="Error" IsChecked="{Binding LogFilterError}"/>
+            </StackPanel>
+            <Button Grid.Column="2" Content="Clear" Command="{Binding ClearLogCommand}"/>
+          </Grid>
+        </Border>
+
+        <!-- Log entries -->
+        <Border Grid.Row="3" Background="#1e1e1e" Height="220" IsVisible="{Binding LogViewerExpanded}">
+          <ScrollViewer Name="LogScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+            <ItemsControl ItemsSource="{Binding LogEntries}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate DataType="svc:LogEntry">
+                  <TextBlock Text="{Binding Message}" FontFamily="Consolas, Menlo, monospace" FontSize="11" Margin="8,1"
+                             TextWrapping="NoWrap"
+                             Classes.logSection="{Binding IsSection}"/>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Border>
+      </Grid>
     </Grid>
 
-    <!-- Status Bar -->
+    <!-- ====== Status bar ====== -->
     <Border Grid.Row="2" Background="#007acc" Height="24">
-      <TextBlock Text="{Binding StatusMessage}" Foreground="White" VerticalAlignment="Center" Margin="16,0" FontSize="12"/>
+      <Grid ColumnDefinitions="*,Auto">
+        <TextBlock Grid.Column="0" Text="{Binding StatusMessage}" Foreground="White" VerticalAlignment="Center" Margin="16,0" FontSize="11"/>
+        <TextBlock Grid.Column="1" Text="{Binding StatusText}" Foreground="White" VerticalAlignment="Center" Margin="16,0" FontSize="11" Opacity="0.8"/>
+      </Grid>
     </Border>
   </Grid>
 </Window>
