@@ -65,6 +65,9 @@ namespace BspLightReSlopper
             Console.WriteLine("                [--max-samples N] [--pivots N] [--max-lights N] [--seed N]");
             Console.WriteLine("                [--minimize-lights-tolerance F]");
             Console.WriteLine("                [--refine-passes N] [--refine-step U]");
+            Console.WriteLine("                [--calibration median|physics]  intensity-to-q3-light-key conversion;");
+            Console.WriteLine("                                                 default median (empirically validated),");
+            Console.WriteLine("                                                 physics inverts gamma/overbright/lmscale");
             Console.WriteLine();
             Console.WriteLine("              Smart defaults (on automatically; opt-out with --no-*):");
             Console.WriteLine("                [--no-half-lambert]      angle model auto-detected from lightmap");
