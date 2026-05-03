@@ -201,6 +201,16 @@ namespace BspLightReSlopper.Estimation
             /// trust the envelope as a hard limit.</summary>
             public float EnvelopeMultiplier { get; init; } = 4.0f;
 
+            /// <summary>Room detection results used as a Bayesian prior to cap the number of lights
+            /// estimated in any given room. Prevents the greedy peel from placing dozens
+            /// of tiny weak lights in a small room just to chase noise residuals.</summary>
+            public Heuristics.RoomDetector.Result? RoomPrior { get; init; }
+
+            /// <summary>Multiplier applied to Room.SuggestedLightCount to determine the hard cap
+            /// on lights for that room. A small room with suggested 1 light gets capped at 1 * 1.5 = 1 (if int cast)
+            /// Wait, let's just make it float and do ceiling. E.g. suggested=1, multiplier=2.0 -> cap 2.</summary>
+            public float RoomPriorMultiplier { get; init; } = 2.0f;
+
             public bool Parallel { get; init; } = true;
         }
 
@@ -327,6 +337,19 @@ namespace BspLightReSlopper.Estimation
             int consecutiveRejects = 0;
             int accepted = 0, rejected = 0;
             var rng = new Random(options.RandomSeed);
+
+            // Track how many lights are placed in each room.
+            int numRooms = options.RoomPrior?.Rooms.Count ?? 0;
+            var roomLightCounts = new int[numRooms];
+            // Seed lights count towards room budgets.
+            foreach (var seed in blowResult?.PointCandidates ?? Enumerable.Empty<EstimatedLight>())
+            {
+                if (options.RoomPrior != null)
+                {
+                    int rIdx = options.RoomPrior.FindRoomIndex(seed.Origin);
+                    if (rIdx >= 0) roomLightCounts[rIdx]++;
+                }
+            }
 
             for (int round = 0; round < options.MaxLights; round++)
             {
@@ -512,6 +535,24 @@ namespace BspLightReSlopper.Estimation
                 bool reject = supportingTexels < options.MinSupportingTexels
                               || explainedFraction < options.MinExplainedFractionPerRound;
 
+                // Enforce room-based light-count prior.
+                int candRoomIdx = -1;
+                if (!reject && options.RoomPrior != null && numRooms > 0)
+                {
+                    candRoomIdx = options.RoomPrior.FindRoomIndex(bestL);
+                    if (candRoomIdx >= 0)
+                    {
+                        var room = options.RoomPrior.Rooms[candRoomIdx];
+                        int cap = (int)Math.Ceiling(room.SuggestedLightCount * options.RoomPriorMultiplier);
+                        if (roomLightCounts[candRoomIdx] >= Math.Max(1, cap))
+                        {
+                            reject = true;
+                            log?.Info($"  round {round + 1}: REJECT  L=({bestL.X:F0},{bestL.Y:F0},{bestL.Z:F0}) " +
+                                      $"room-prior cap reached ({roomLightCounts[candRoomIdx]} >= {cap} for {room.Kind})");
+                        }
+                    }
+                }
+
                 if (reject)
                 {
                     // Roll back the subtraction.
@@ -533,6 +574,7 @@ namespace BspLightReSlopper.Estimation
                 }
 
                 // ---- 6. Accept ----
+                if (candRoomIdx >= 0) roomLightCounts[candRoomIdx]++;
                 accepted++;
                 consecutiveRejects = 0;
                 Vector3 chroma = intensityScalar > 0 ? bestI / intensityScalar : Vector3.One;

@@ -50,6 +50,21 @@ namespace BspLightReSlopper.Heuristics
             public IReadOnlyList<Room> Rooms { get; init; } = Array.Empty<Room>();
             public int LeafCount { get; init; }
             public int UnassignedLeafCount { get; init; }
+            /// <summary>Back-reference to the BSP for FindRoom queries.</summary>
+            public BspFile? Bsp { get; init; }
+
+            /// <summary>Returns the room index containing the point, or -1 if outside/unassigned.</summary>
+            public int FindRoomIndex(Vector3 p)
+            {
+                if (Bsp == null || Rooms.Count == 0) return -1;
+                int leaf = RoomDetector.FindLeaf(Bsp, p);
+                if (leaf < 0) return -1;
+                for (int i = 0; i < Rooms.Count; i++)
+                {
+                    if (Rooms[i].Leafs.Contains(leaf)) return i;
+                }
+                return -1;
+            }
         }
 
         /// <summary>
@@ -131,6 +146,7 @@ namespace BspLightReSlopper.Heuristics
                 Rooms = rooms,
                 LeafCount = nLeafs,
                 UnassignedLeafCount = unassigned,
+                Bsp = bsp,
             };
         }
 
@@ -167,7 +183,7 @@ namespace BspLightReSlopper.Heuristics
             return adj;
         }
 
-        private static int FindLeaf(BspFile bsp, Vector3 p)
+        internal static int FindLeaf(BspFile bsp, Vector3 p)
         {
             // Defensive: degenerate BSPs (no BSP tree) have no leaf assignment. The
             // caller should normally have early-exited in Detect(), but be safe.

@@ -145,6 +145,7 @@ namespace BspLightReSlopper.Cli
                 Visibility = noVis ? null : vis,
                 HalfLambert = halfLambert,
                 EnvelopeMultiplier = envMult,
+                RoomPrior = roomDetect,
             }, log);
             log.Info($"accepted: {result.RoundsAccepted}, rejected: {result.RoundsRejected}");
             log.Info($"rounds: {result.RoundsRun}, initial-energy: {result.InitialEnergy:F2}, final-residual: {result.FinalResidualEnergy:F2}, elapsed: {result.ElapsedSeconds:F1}s");
