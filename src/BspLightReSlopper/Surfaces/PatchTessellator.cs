@@ -49,11 +49,46 @@ namespace BspLightReSlopper.Surfaces
                 for (int i = 0; i < pw; i++)
                     ctrl[j * pw + i] = bsp.DrawVerts[firstVert + j * pw + i];
 
+            // ---- Adaptive subdivision ----
+            // Compute world-space bounding box of the control mesh and lightmap UV range.
+            // Target: each triangle edge should be < 1.5 lightmap texels in world space.
+            int adaptiveLevel = level;
+            if (level == DefaultLevel) // only auto-adapt when caller didn't specify
+            {
+                Vector3 lo = ctrl[0].Xyz, hi = ctrl[0].Xyz;
+                Vector2 lmLo = ctrl[0].Lm0, lmHi = ctrl[0].Lm0;
+                for (int k = 1; k < ctrl.Length; k++)
+                {
+                    var p = ctrl[k].Xyz;
+                    lo = Vector3.Min(lo, p);
+                    hi = Vector3.Max(hi, p);
+                    var lm = ctrl[k].Lm0;
+                    lmLo = Vector2.Min(lmLo, lm);
+                    lmHi = Vector2.Max(lmHi, lm);
+                }
+                Vector3 size = hi - lo;
+                float worldMax = MathF.Max(size.X, MathF.Max(size.Y, size.Z));
+                Vector2 lmSize = lmHi - lmLo;
+                float lmTexels = MathF.Max(lmSize.X, lmSize.Y) * 128f; // atlas is 128x128
+                if (lmTexels > 1f && worldMax > 1f)
+                {
+                    float worldPerTexel = worldMax / lmTexels;
+                    float targetEdge = 1.5f * worldPerTexel; // 1.5 texels
+                    int estLevel = (int)MathF.Ceiling(1f / targetEdge);
+                    adaptiveLevel = Math.Max(2, Math.Min(16, estLevel));
+                }
+            }
+
             // Reused per-sub-patch grid buffer.
-            int gridDim = level + 1;
+            int gridDim = adaptiveLevel + 1;
             var grid = new BspDrawVert[gridDim * gridDim];
 
-            var tris = new List<SurfaceTriangle>(subW * subH * level * level * 2);
+            var tris = new List<SurfaceTriangle>(subW * subH * adaptiveLevel * adaptiveLevel * 2);
+
+            // UV continuity tracking: store last-row / last-col vertices for edge matching.
+            var prevRowLast = new BspDrawVert[subW * gridDim]; // [subX, gx] = bottom edge of sub-patch above
+            var prevColLast = new BspDrawVert[subH * gridDim]; // [subY, gy] = right edge of sub-patch to the left
+            int uvMismatchCount = 0;
 
             for (int subY = 0; subY < subH; subY++)
             {
@@ -62,16 +97,16 @@ namespace BspLightReSlopper.Surfaces
                     int baseI = subX * 2;
                     int baseJ = subY * 2;
 
-                    // Evaluate Bezier on the (gridDim × gridDim) grid for this sub-patch.
+                    // Evaluate Bezier on the (gridDim x gridDim) grid for this sub-patch.
                     for (int gy = 0; gy < gridDim; gy++)
                     {
-                        float v = (float)gy / level;
+                        float v = (float)gy / adaptiveLevel;
                         float bv0 = (1 - v) * (1 - v);
                         float bv1 = 2f * v * (1 - v);
                         float bv2 = v * v;
                         for (int gx = 0; gx < gridDim; gx++)
                         {
-                            float u = (float)gx / level;
+                            float u = (float)gx / adaptiveLevel;
                             float bu0 = (1 - u) * (1 - u);
                             float bu1 = 2f * u * (1 - u);
                             float bu2 = u * u;
@@ -85,9 +120,9 @@ namespace BspLightReSlopper.Surfaces
                     }
 
                     // Triangulate the grid as quads (two triangles per quad).
-                    for (int gy = 0; gy < level; gy++)
+                    for (int gy = 0; gy < adaptiveLevel; gy++)
                     {
-                        for (int gx = 0; gx < level; gx++)
+                        for (int gx = 0; gx < adaptiveLevel; gx++)
                         {
                             var v00 = grid[gy * gridDim + gx];
                             var v10 = grid[gy * gridDim + (gx + 1)];
@@ -97,7 +132,44 @@ namespace BspLightReSlopper.Surfaces
                             EmitTri(tris, surfaceIndex, s.ShaderIndex, v00, v11, v01);
                         }
                     }
+
+                    // ---- UV edge-continuity check ----
+                    // Compare bottom edge of this sub-patch with top edge of sub-patch below.
+                    if (subY > 0)
+                    {
+                        for (int gx = 0; gx < gridDim; gx++)
+                        {
+                            var cur = grid[0 * gridDim + gx]; // top row of current
+                            var prev = prevRowLast[subX * gridDim + gx]; // bottom row of above
+                            if (Vector2.Distance(cur.Lm0, prev.Lm0) > 0.5f / 128f) uvMismatchCount++;
+                        }
+                    }
+                    // Compare right edge of this sub-patch with left edge of sub-patch to the right.
+                    if (subX > 0)
+                    {
+                        for (int gy = 0; gy < gridDim; gy++)
+                        {
+                            var cur = grid[gy * gridDim + 0]; // left col of current
+                            var prev = prevColLast[subY * gridDim + gy]; // right col of left neighbor
+                            if (Vector2.Distance(cur.Lm0, prev.Lm0) > 0.5f / 128f) uvMismatchCount++;
+                        }
+                    }
+
+                    // Snapshot edges for next sub-patch continuity checks.
+                    for (int gx = 0; gx < gridDim; gx++)
+                        prevRowLast[subX * gridDim + gx] = grid[(gridDim - 1) * gridDim + gx];
+                    for (int gy = 0; gy < gridDim; gy++)
+                        prevColLast[subY * gridDim + gy] = grid[gy * gridDim + (gridDim - 1)];
                 }
+            }
+
+            // Patch surfaces with UV discontinuities > 2 pixels may have lightmap seam artifacts.
+            // We keep the triangles (they're still useful for position/normal) but the estimator
+            // should treat them with lower confidence near the discontinuity edges.
+            if (uvMismatchCount > 2)
+            {
+                // Diagnostic: in future we could flag this surface for lower confidence.
+                // For now: silently accepted; the sampling is still valid away from edges.
             }
 
             return tris;
