@@ -60,6 +60,30 @@ namespace BspLightReSlopper.Cli
             var vis = new BspVis(bsp);
             log.Info($"vis: {(vis.HasVis ? $"{vis.NumClusters} clusters / {vis.BytesPerCluster} bytes-per-cluster" : "absent (no -vis stage or single-leaf map; estimator falls back to non-visibility mode)")}");
 
+            // ----- Room detection (P1.4) -----
+            log.Section("room detection");
+            var rooms = RoomDetector.Detect(bsp);
+            if (rooms.Rooms.Count > 0)
+            {
+                int suggestedTotal = 0;
+                foreach (var room in rooms.Rooms)
+                {
+                    log.Info($"  room: kind={room.Kind} leafs={room.Leafs.Count} vol={room.Volume:F0} doorways={room.DoorwayCount} shader={room.DominantShader} suggestedLights={room.SuggestedLightCount} intensity=({room.SuggestedIntensityRange.min:F0}-{room.SuggestedIntensityRange.max:F0}) spacing={room.SuggestedSpacing:F0}");
+                    suggestedTotal += room.SuggestedLightCount;
+                }
+                log.Info($"  rooms detected: {rooms.Rooms.Count}, suggested total lights: {suggestedTotal}, unassigned leafs: {rooms.UnassignedLeafCount}");
+                // If user didn't specify --max-lights, use room-suggested total (capped to 256 for safety).
+                if (!args.Has("max-lights") && suggestedTotal > 0)
+                {
+                    maxLights = Math.Min(suggestedTotal, 256);
+                    log.Info($"  auto-setting --max-lights to {maxLights} (room-aware)");
+                }
+            }
+            else
+            {
+                log.Info("  no rooms detected (likely all solid or single open space)");
+            }
+
             // ----- Sample texels (lightmap-lit surfaces) -----
             log.Section("texel sampling");
             var atlas = LightmapAtlas.FromBsp(bsp);
