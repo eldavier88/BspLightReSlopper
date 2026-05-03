@@ -67,12 +67,24 @@ namespace BspLightReSlopper.Estimation
             BspFile bsp, AlbedoCache? albedo, bool halfLambert, Options? options = null, Logger? log = null)
         {
             options ??= new Options();
-            if (albedo is null)
+
+            // Albedo lookup: use the cache if we have one, otherwise the shader-name
+            // heuristic. The asset-less heuristic is less reliable, so the colour-match
+            // threshold is tightened to demand a closer match before we suppress.
+            Func<string, Vector3?> albedoLookup;
+            float cosineThreshold;
+            if (albedo != null)
             {
-                log?.Info("  bounce-suppress: no albedo cache — skipping colour-matching heuristic (keeping all non-blowout lights)");
-                var allDecisions = lights.Select(l => new Decision { Suppress = false, Reason = l.BlownOut ? "blowout-seed" : "no-albedo-cache" }).ToList();
-                return new Result { KeptLights = lights.ToList(), SuppressedLights = Array.Empty<EstimatedLight>(), Decisions = allDecisions };
+                albedoLookup = albedo.GetAlbedo;
+                cosineThreshold = options.CosineThreshold;
             }
+            else
+            {
+                albedoLookup = ShaderNameAlbedoGuess;
+                cosineThreshold = MathF.Max(options.CosineThreshold, 0.97f);
+                log?.Info($"  bounce-suppress: no albedo cache — using shader-name albedo heuristic (cosine threshold tightened to {cosineThreshold:0.00})");
+            }
+
             var keep = new List<EstimatedLight>(lights.Count);
             var drop = new List<EstimatedLight>();
             var decisions = new List<Decision>(lights.Count);
@@ -116,7 +128,7 @@ namespace BspLightReSlopper.Estimation
                     int sIdx = s.ShaderIndex;
                     if (sIdx < 0 || sIdx >= bsp.Shaders.Count) continue;
                     string shaderName = bsp.Shaders[sIdx].Name;
-                    var alb = albedo.GetAlbedo(shaderName);
+                    var alb = albedoLookup(shaderName);
                     if (!alb.HasValue) continue;
                     if (!perShaderTally.TryGetValue(sIdx, out var tt)) tt = (0, Vector3.Zero);
                     tt.count++;
@@ -158,7 +170,7 @@ namespace BspLightReSlopper.Estimation
                 Vector3 lightColorN = l.Color.LengthSquared() > 1e-6f ? Vector3.Normalize(l.Color) : Vector3.UnitZ;
                 Vector3 albedoN = dominantAlbedo.LengthSquared() > 1e-6f ? Vector3.Normalize(dominantAlbedo) : Vector3.UnitZ;
                 float cosine = Vector3.Dot(lightColorN, albedoN);
-                bool suppress = cosine >= options.CosineThreshold;
+                bool suppress = cosine >= cosineThreshold;
                 if (suppress)
                 {
                     drop.Add(l);
@@ -196,6 +208,94 @@ namespace BspLightReSlopper.Estimation
             if (ndotL > 1) ndotL = 1;
             float a = ndotL * 0.5f + 0.5f;
             return a * a;
+        }
+
+        // ----- Shader-name albedo heuristic (asset-less fallback) -----
+        // Match shader names against a curated keyword table to guess a plausible diffuse
+        // albedo for each surface. Patterns are ordered by specificity: specific colour
+        // names first, then materials, then generic descriptors. First match wins per
+        // shader name. Returns null for shader names with no recognised keyword (the
+        // bounce suppressor then bypasses that surface as "unknown albedo" rather than
+        // assuming a default — bypassing is the safe choice since a wrong guess produces
+        // false drops). Albedo values are linear-light reflectances (0..1 per channel)
+        // tuned to roughly match texture averages on typical Quake/JK engine maps.
+
+        private static readonly (string Pattern, Vector3 Albedo)[] _shaderNameAlbedoTable = new[]
+        {
+            // Specific colour names (highest priority — most discriminating).
+            ("magenta",  new Vector3(0.70f, 0.10f, 0.70f)),
+            ("crimson",  new Vector3(0.55f, 0.10f, 0.08f)),
+            ("scarlet",  new Vector3(0.60f, 0.15f, 0.10f)),
+            ("yellow",   new Vector3(0.65f, 0.55f, 0.15f)),
+            ("orange",   new Vector3(0.65f, 0.40f, 0.15f)),
+            ("purple",   new Vector3(0.40f, 0.20f, 0.50f)),
+            ("violet",   new Vector3(0.45f, 0.20f, 0.55f)),
+            ("cyan",     new Vector3(0.20f, 0.55f, 0.55f)),
+            ("teal",     new Vector3(0.15f, 0.45f, 0.45f)),
+            ("white",    new Vector3(0.78f, 0.78f, 0.78f)),
+            // Distinctive materials (precious / coloured metals).
+            ("gold",     new Vector3(0.65f, 0.50f, 0.20f)),
+            ("brass",    new Vector3(0.60f, 0.45f, 0.18f)),
+            ("copper",   new Vector3(0.55f, 0.30f, 0.18f)),
+            ("rust",     new Vector3(0.45f, 0.25f, 0.15f)),
+            // Common materials.
+            ("chrome",   new Vector3(0.65f, 0.65f, 0.68f)),
+            ("steel",    new Vector3(0.55f, 0.55f, 0.58f)),
+            ("alum",     new Vector3(0.60f, 0.60f, 0.60f)),
+            ("iron",     new Vector3(0.40f, 0.40f, 0.40f)),
+            ("metal",    new Vector3(0.55f, 0.55f, 0.55f)),
+            ("wood",     new Vector3(0.45f, 0.32f, 0.18f)),
+            ("plank",    new Vector3(0.45f, 0.32f, 0.18f)),
+            ("crate",    new Vector3(0.45f, 0.32f, 0.18f)),
+            ("brown",    new Vector3(0.40f, 0.28f, 0.18f)),
+            ("tan",      new Vector3(0.55f, 0.45f, 0.30f)),
+            ("dirt",     new Vector3(0.40f, 0.30f, 0.18f)),
+            ("sand",     new Vector3(0.65f, 0.55f, 0.35f)),
+            ("rock",     new Vector3(0.45f, 0.40f, 0.35f)),
+            ("stone",    new Vector3(0.50f, 0.50f, 0.50f)),
+            ("concrete", new Vector3(0.55f, 0.55f, 0.55f)),
+            ("asphalt",  new Vector3(0.15f, 0.15f, 0.15f)),
+            ("tar",      new Vector3(0.10f, 0.10f, 0.10f)),
+            ("grass",    new Vector3(0.20f, 0.40f, 0.15f)),
+            ("moss",     new Vector3(0.20f, 0.35f, 0.18f)),
+            ("leaf",     new Vector3(0.25f, 0.40f, 0.18f)),
+            ("snow",     new Vector3(0.85f, 0.85f, 0.88f)),
+            ("ice",      new Vector3(0.70f, 0.78f, 0.85f)),
+            ("water",    new Vector3(0.20f, 0.30f, 0.35f)),
+            ("lava",     new Vector3(0.60f, 0.20f, 0.10f)),
+            ("blood",    new Vector3(0.40f, 0.05f, 0.05f)),
+            ("carpet",   new Vector3(0.40f, 0.25f, 0.20f)),
+            ("cloth",    new Vector3(0.40f, 0.35f, 0.30f)),
+            ("fabric",   new Vector3(0.40f, 0.35f, 0.30f)),
+            // Generic colour descriptors (lower priority — these match a lot).
+            ("dark",     new Vector3(0.20f, 0.20f, 0.20f)),
+            ("black",    new Vector3(0.10f, 0.10f, 0.10f)),
+            ("red",      new Vector3(0.55f, 0.15f, 0.12f)),
+            ("blue",     new Vector3(0.15f, 0.20f, 0.55f)),
+            ("green",    new Vector3(0.20f, 0.45f, 0.20f)),
+            ("grey",     new Vector3(0.50f, 0.50f, 0.50f)),
+            ("gray",     new Vector3(0.50f, 0.50f, 0.50f)),
+            // Note: deliberately NO entries for "wall", "floor", "ceiling" — those tokens
+            // appear in shaders of every conceivable colour and would pollute the
+            // heuristic with grey false-matches.
+        };
+
+        /// <summary>
+        /// Asset-less albedo fallback: scan a shader path for any of the curated keyword
+        /// patterns above and return the corresponding plausible diffuse colour, or
+        /// <c>null</c> if no pattern matches (the bounce suppressor then treats this
+        /// shader as unknown and does not drop lights based on it).
+        /// </summary>
+        public static Vector3? ShaderNameAlbedoGuess(string shaderName)
+        {
+            if (string.IsNullOrEmpty(shaderName)) return null;
+            // Lower-case once; the table patterns are all lowercase ASCII.
+            string s = shaderName.ToLowerInvariant();
+            foreach (var (pat, alb) in _shaderNameAlbedoTable)
+            {
+                if (s.IndexOf(pat, StringComparison.Ordinal) >= 0) return alb;
+            }
+            return null;
         }
     }
 }

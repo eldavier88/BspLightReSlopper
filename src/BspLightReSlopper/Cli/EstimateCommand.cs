@@ -127,8 +127,11 @@ namespace BspLightReSlopper.Cli
             // ----- Estimate -----
             log.Section("estimator");
             bool noVis = args.Flag("no-vis");
-            bool halfLambert = args.Flag("half-lambert")
-                || (args.Flag("infer-angle-model") && infer.LightAngleHl);
+            // Smart default: half-Lambert is auto-detected from CompileSettingsInferer.
+            // Users can force on/off with --half-lambert / --no-half-lambert. The legacy
+            // --infer-angle-model flag remains accepted (no-op; behaviour is now default).
+            bool halfLambert = args.FlagOrDefault("half-lambert", "no-half-lambert", infer.LightAngleHl);
+            log.Info($"  half-Lambert: {(halfLambert ? "on" : "off")} (inferred {infer.LightAngleHl}; override with --half-lambert / --no-half-lambert)");
             float envMult = infer.FastUsed
                 ? new LightEstimator.Options().EnvelopeMultiplierFast
                 : new LightEstimator.Options().EnvelopeMultiplierNoFast;
@@ -164,7 +167,7 @@ namespace BspLightReSlopper.Cli
                     }
                     else
                     {
-                        log.Info("no asset directory — using white-albedo fallback (bounce suppression limited)");
+                        log.Info("no asset directory — bounce suppression will use the shader-name albedo heuristic (less reliable than --assets, but still drops obvious bounce-fit false positives)");
                     }
                     var bsResult = BspLightReSlopper.Estimation.BounceSuppressor.Filter(result.Lights, samples.Samples, bsp, albedoCache, halfLambert, log: log);
                     result = new LightEstimator.Result
@@ -185,7 +188,10 @@ namespace BspLightReSlopper.Cli
                 }
             }
 
-            if (args.Flag("minimize-lights"))
+            // Smart default: minimize-lights is on. Override with --no-minimize-lights.
+            // Legacy --minimize-lights flag still accepted (it's now a no-op since the
+            // behaviour is the default).
+            if (args.FlagOrDefault("minimize-lights", "no-minimize-lights", true))
             {
                 float tol = float.TryParse(args.Get("minimize-lights-tolerance"), out float t) ? t : 0.02f;
                 var minimized = LightEstimator.MinimizeLightCountGreedy(result.Lights, samples.Samples, halfLambert, 32f, tol, log, excludeMask: result.BlownMask);
@@ -202,7 +208,9 @@ namespace BspLightReSlopper.Cli
                 };
             }
 
-            if (args.Flag("refine-lights"))
+            // Smart default: photometric refine is on. Override with --no-refine-lights.
+            // Legacy --refine-lights flag still accepted (no-op when default-on).
+            if (args.FlagOrDefault("refine-lights", "no-refine-lights", true))
             {
                 var rOpts = new BspLightReSlopper.Metrics.PerceptualRefiner.Options
                 {

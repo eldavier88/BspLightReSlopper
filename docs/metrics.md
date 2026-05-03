@@ -142,6 +142,11 @@ Values like **“fast: likely-on”** are **educated guesses** from BSP/lightmap
 
 ## RecompileRefiner (closed-loop “look the same”)
 
+> **Not part of the default `bsplrs estimate` pipeline.** Skip this section unless you're
+> modifying the estimator algorithm itself. Normal users never invoke q3map2 — see the
+> README's "Quick start" for the actual user-facing workflow. This section documents an
+> internal validation harness used only by the developer of the algorithm.
+
 The RecompileRefiner (`Metrics/RecompileRefiner.cs`, used internally by `converge --iterate` and
 `estimate --dev-validate`) is a **developer-only** tool for algorithm validation. It does the
 following per iteration:

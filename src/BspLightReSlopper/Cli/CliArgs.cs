@@ -20,6 +20,24 @@ namespace BspLightReSlopper.Cli
         public bool Has(string name) => _opts.ContainsKey(name) || _flags.Contains(name);
         public bool Flag(string name) => _flags.Contains(name);
 
+        /// <summary>
+        /// Three-way flag resolution for opt-out-style switches. Returns:
+        /// <list type="bullet">
+        ///   <item><c>true</c> if <c>--{positiveName}</c> is present.</item>
+        ///   <item><c>false</c> if <c>--{negativeName}</c> is present.</item>
+        ///   <item><paramref name="defaultValue"/> otherwise.</item>
+        /// </list>
+        /// If both flags are present, the negative wins (explicit opt-out beats explicit opt-in).
+        /// Used for sophisticated-default behaviours (half-Lambert, minimize-lights, refine-lights)
+        /// so they're on without any flag and can be turned off with a single <c>--no-*</c>.
+        /// </summary>
+        public bool FlagOrDefault(string positiveName, string negativeName, bool defaultValue)
+        {
+            if (_flags.Contains(negativeName)) return false;
+            if (_flags.Contains(positiveName)) return true;
+            return defaultValue;
+        }
+
         public string Require(string name) => Get(name) ?? throw new ArgumentException($"missing required option --{name}");
 
         public CliArgs(string command, IReadOnlyList<string> positionals, Dictionary<string, string> opts, HashSet<string> flags)

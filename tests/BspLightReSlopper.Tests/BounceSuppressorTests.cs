@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
+using System.Text;
 using BspLightReSlopper.Bsp;
 using BspLightReSlopper.Estimation;
 using BspLightReSlopper.Pk3;
@@ -128,6 +129,159 @@ textures/test/no_image
             {
                 try { Directory.Delete(tmp, recursive: true); } catch { }
             }
+        }
+
+        // ----- Asset-less albedo fallback (Section 2.4) -----
+
+        [Theory]
+        [InlineData("textures/imperial/wall_metal01", 0.55f, 0.55f, 0.55f)]   // metal
+        [InlineData("textures/yavin/floor_stone02",   0.50f, 0.50f, 0.50f)]   // stone
+        [InlineData("textures/imperial_red/red_wall", 0.55f, 0.15f, 0.12f)]   // red
+        [InlineData("textures/forest/grass_path",     0.20f, 0.40f, 0.15f)]   // grass
+        [InlineData("textures/medieval/wood_plank",   0.45f, 0.32f, 0.18f)]   // wood (matches first)
+        [InlineData("textures/lab/MAGENTA_Tile",      0.70f, 0.10f, 0.70f)]   // case-insensitive
+        public void ShaderNameAlbedoGuess_RecognizesCommonPatterns(string shaderName, float r, float g, float b)
+        {
+            var alb = BounceSuppressor.ShaderNameAlbedoGuess(shaderName);
+            Assert.True(alb.HasValue, $"expected non-null albedo for '{shaderName}'");
+            Assert.Equal(new Vector3(r, g, b), alb!.Value);
+        }
+
+        [Theory]
+        [InlineData("textures/common/clip")]
+        [InlineData("textures/test/quad")]
+        [InlineData("textures/abstract/whatever_xyz")]
+        public void ShaderNameAlbedoGuess_ReturnsNullForUnrecognisedPaths(string shaderName)
+        {
+            var alb = BounceSuppressor.ShaderNameAlbedoGuess(shaderName);
+            Assert.False(alb.HasValue, $"expected null albedo for '{shaderName}', got {alb}");
+        }
+
+        [Fact]
+        public void AssetLess_DropsBlatantBounceFit_MagentaLightOnMagentaSurface()
+        {
+            // Magenta-named shader → ShaderNameAlbedoGuess returns (0.70, 0.10, 0.70).
+            // Magenta light → cosine ~1.0 against that albedo → must drop.
+            var (bsp, samples) = BuildSingleShaderQuadBsp("textures/test/magenta_pillar");
+            var magentaLight = new EstimatedLight
+            {
+                Origin = new Vector3(100, 0, 100),
+                Color  = new Vector3(1.0f, 0.2f, 1.0f),
+                Intensity = 2000f, // < default IntensityFloor (5000)
+            };
+            var r = BounceSuppressor.Filter(new[] { magentaLight }, samples, bsp, albedo: null, halfLambert: false);
+            Assert.Empty(r.KeptLights);
+            Assert.Single(r.SuppressedLights);
+            Assert.Equal("color-matches-albedo", r.Decisions[0].Reason);
+        }
+
+        [Fact]
+        public void AssetLess_KeepsBrightLight_RegardlessOfColourMatch()
+        {
+            // Same magenta-on-magenta scenario, but Intensity above the IntensityFloor.
+            // Bright lights are kept regardless of albedo cosine — they're plausibly real
+            // coloured fixtures lighting a same-coloured surface.
+            var (bsp, samples) = BuildSingleShaderQuadBsp("textures/test/magenta_pillar");
+            var brightMagenta = new EstimatedLight
+            {
+                Origin = new Vector3(100, 0, 100),
+                Color  = new Vector3(1.0f, 0.2f, 1.0f),
+                Intensity = 8000f, // > default IntensityFloor (5000)
+            };
+            var r = BounceSuppressor.Filter(new[] { brightMagenta }, samples, bsp, albedo: null, halfLambert: false);
+            Assert.Single(r.KeptLights);
+            Assert.Empty(r.SuppressedLights);
+            Assert.Equal("intensity-above-floor", r.Decisions[0].Reason);
+        }
+
+        [Fact]
+        public void AssetLess_KeepsColourMismatch_RedLightOnConcreteSurface()
+        {
+            // Concrete-named shader → grey albedo (0.55, 0.55, 0.55).
+            // Red light → cosine ~0.77 << 0.97 → must keep.
+            var (bsp, samples) = BuildSingleShaderQuadBsp("textures/test/concrete_floor");
+            var redLight = new EstimatedLight
+            {
+                Origin = new Vector3(100, 0, 100),
+                Color  = new Vector3(1.0f, 0.2f, 0.2f),
+                Intensity = 2000f,
+            };
+            var r = BounceSuppressor.Filter(new[] { redLight }, samples, bsp, albedo: null, halfLambert: false);
+            Assert.Single(r.KeptLights);
+            Assert.Empty(r.SuppressedLights);
+            Assert.Equal("color-mismatch", r.Decisions[0].Reason);
+        }
+
+        [Fact]
+        public void AssetLess_KeepsLight_WhenShaderNameIsUnknown()
+        {
+            // No keyword match → ShaderNameAlbedoGuess returns null → suppressor sees
+            // zero known-albedo samples → keeps the light defensively. This is the
+            // "we have no idea what this surface is" safe path.
+            var (bsp, samples) = BuildSingleShaderQuadBsp("textures/abstract/whatever_xyz");
+            var anyLight = new EstimatedLight
+            {
+                Origin = new Vector3(100, 0, 100),
+                Color  = new Vector3(1.0f, 0.2f, 1.0f),
+                Intensity = 2000f,
+            };
+            var r = BounceSuppressor.Filter(new[] { anyLight }, samples, bsp, albedo: null, halfLambert: false);
+            Assert.Single(r.KeptLights);
+            Assert.Empty(r.SuppressedLights);
+            Assert.Equal("insufficient-known-albedo-samples", r.Decisions[0].Reason);
+        }
+
+        // Build a synthetic single-shader BSP whose only shader name is `shaderName`,
+        // plus a 50-sample TexelSample list with predictable observed luma. Patches the
+        // shader name in-place over the original "textures/test/quad" placeholder that
+        // TestBsp.BuildIbsp46QuadWithGradientLightmap stamps.
+        private static (BspFile bsp, List<TexelSample> samples) BuildSingleShaderQuadBsp(string shaderName)
+        {
+            var bytes = TestBsp.BuildIbsp46QuadWithGradientLightmap(8,
+                (ax, ay) => ((byte)180, (byte)40, (byte)40));
+            PatchShaderName(bytes, "textures/test/quad", shaderName);
+            var bsp = BspLoader.LoadFromBytes(bytes);
+            Assert.Equal(shaderName, bsp.Shaders[0].Name);
+
+            var samples = new List<TexelSample>(50);
+            for (int i = 0; i < 50; i++)
+            {
+                samples.Add(new TexelSample
+                {
+                    SurfaceIndex = 0,
+                    ShaderIndex = 0,
+                    World = new Vector3(i * 4f, 0, 0),
+                    Normal = Vector3.UnitZ,
+                    Observed = new Vector3(0.2f, 0.2f, 0.2f),
+                });
+            }
+            return (bsp, samples);
+        }
+
+        private static void PatchShaderName(byte[] bsp, string oldName, string newName)
+        {
+            byte[] needle = Encoding.ASCII.GetBytes(oldName);
+            byte[] replacement = Encoding.ASCII.GetBytes(newName);
+            if (replacement.Length >= 64) throw new ArgumentException($"shader name too long: {newName}");
+            int offset = IndexOfBytes(bsp, needle);
+            if (offset < 0) throw new InvalidOperationException($"could not find '{oldName}' in BSP byte buffer");
+            // Zero the entire 64-byte name field, then copy the new name.
+            for (int i = 0; i < 64; i++) bsp[offset + i] = 0;
+            Array.Copy(replacement, 0, bsp, offset, replacement.Length);
+        }
+
+        private static int IndexOfBytes(byte[] haystack, byte[] needle)
+        {
+            for (int i = 0; i <= haystack.Length - needle.Length; i++)
+            {
+                bool match = true;
+                for (int j = 0; j < needle.Length; j++)
+                {
+                    if (haystack[i + j] != needle[j]) { match = false; break; }
+                }
+                if (match) return i;
+            }
+            return -1;
         }
     }
 }

@@ -59,6 +59,14 @@ namespace BspLightReSlopper.Heuristics
         public static Result Detect(BspFile bsp, IReadOnlyList<TexelSample>? samples = null)
         {
             int nLeafs = bsp.Leafs.Count;
+            // Degenerate-BSP guard: synthetic / minimal BSPs (used by tests and edge-case
+            // small maps) may ship without a node tree, leafs, or planes. Without those
+            // we cannot do leaf classification — return an empty room set instead of
+            // crashing in FindLeaf().
+            if (nLeafs == 0 || bsp.Nodes.Count == 0 || bsp.Planes.Count == 0)
+            {
+                return new Result { Rooms = Array.Empty<Room>(), LeafCount = nLeafs, UnassignedLeafCount = nLeafs };
+            }
             var visited = new bool[nLeafs];
             var rooms = new List<Room>();
             int unassigned = 0;
@@ -161,10 +169,15 @@ namespace BspLightReSlopper.Heuristics
 
         private static int FindLeaf(BspFile bsp, Vector3 p)
         {
+            // Defensive: degenerate BSPs (no BSP tree) have no leaf assignment. The
+            // caller should normally have early-exited in Detect(), but be safe.
+            if (bsp.Nodes.Count == 0 || bsp.Planes.Count == 0) return -1;
             int node = 0;
             while (node >= 0)
             {
+                if (node >= bsp.Nodes.Count) return -1; // malformed BSP — abort traversal
                 var n = bsp.Nodes[node];
+                if (n.PlaneIndex < 0 || n.PlaneIndex >= bsp.Planes.Count) return -1;
                 var plane = bsp.Planes[n.PlaneIndex];
                 float d = Vector3.Dot(p, plane.Normal) - plane.Dist;
                 node = d >= 0 ? n.Child0 : n.Child1;

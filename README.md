@@ -6,26 +6,59 @@ draw-surface geometry, and emit them as a Quake-style `.ent` file.
 
 CPU-only, .NET 5.0, single CLI binary `bsplrs`. No GPU / CUDA / OpenCL.
 
-## Final user-facing workflow
+## Quick start
+
+```
+bsplrs estimate --bsp foo.bsp
+```
+
+That's the entire user-facing workflow. Every other flag is optional tuning. Sophisticated
+defaults run automatically:
+
+- Half-Lambert vs Lambert is auto-detected from the lightmap byte distribution.
+- Light count is auto-derived from BSP room flood-fill (`RoomDetector`).
+- Greedy L0 light-count minimisation runs by default (override with `--no-minimize-lights`).
+- Photometric coordinate-descent refinement runs by default (override with `--no-refine-lights`).
+- Bounce-fit false positives are dropped by default (override with `--no-bounce-suppress`).
+- Sun detection runs by default (override with `--no-sun`).
+
+No recompilation is performed in the normal workflow — `bsplrs` is a pure-analysis tool.
+You do **not** need q3map2, `BSPLRS_*` env vars, an SDK, or any other companion binary.
+
+## All `estimate` flags
 
 ```
 bsplrs estimate --bsp <path | path.pk3!maps/foo.bsp>
-                [--assets <asset-dir>] [-o <out.ent>] [--log <log>] [--no-vis]
+                [--assets <asset-dir>]                    optional, improves bounce suppression
+                [-o <out.ent>] [--log <log>]
                 [--max-samples N] [--pivots N] [--max-lights N] [--seed N]
-                [--half-lambert] [--infer-angle-model]
-                [--minimize-lights] [--minimize-lights-tolerance F]
-                [--refine-lights] [--refine-passes N] [--refine-step U]
-                [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>]
+                [--minimize-lights-tolerance F] [--refine-passes N] [--refine-step U]
+                [--no-half-lambert] [--no-minimize-lights] [--no-refine-lights]
+                [--no-vis] [--no-bounce-suppress] [--no-classify] [--no-sun]
+                [--emit-sky-shader]
 ```
+
+Developer-only flags (NOT REQUIRED for normal use):
+
+```
+                [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>
+                 [--game jk2|ja|quake3] [--refine-timeout-mins N]]
+```
+
+The `--dev-validate` path is used by the algorithm author during development to score
+iterations against ground-truth recompiles. It is irrelevant to normal users — see
+[docs/metrics.md](docs/metrics.md#recompilerefiner-closed-loop-look-the-same) for what
+it does and why you almost certainly don't want to run it.
 
 Inputs:
 - `--bsp` — either a loose `.bsp` file path, or `archive.pk3!maps/foo.bsp` to read from inside
-  a `.pk3`. This is the only required argument.
-- `--assets` — *(optional but recommended)* folder containing the game's `.pk3` archives
-  (and/or loose `maps/`, `scripts/`, `textures/` folders). Used to improve bounce-suppression
-  heuristics by resolving material albedo. When omitted, the estimator falls back to a
-  white-albedo approximation and still produces good results.
-- All other flags are optional — sensible defaults are auto-detected from the BSP geometry.
+  a `.pk3`. **This is the only required argument.**
+- `--assets` — *(optional)* folder containing the game's `.pk3` archives (and/or loose `maps/`,
+  `scripts/`, `textures/` folders). Used to improve bounce-suppression accuracy by resolving
+  material albedo. When omitted, the estimator falls back to a curated shader-name keyword
+  table that still drops blatant bounce-fit false positives (e.g. magenta light on a
+  magenta-named surface) — see `BounceSuppressor.ShaderNameAlbedoGuess`.
+- All other flags are optional; sensible defaults are auto-detected from the BSP geometry.
 
 Outputs:
 - `<bsp>.ent` — Quake-style `.map` entity blocks for every estimated `light`, with the standard
@@ -78,11 +111,10 @@ bsplrs converge     --assets <dir> --base-path <fs_basepath> --q3map2 <q3map2.ex
                     nudges minimising perceptual MSE across N recompiles per map (the
                     "match the look" optimisation; keeps best iteration's lights).
 
-bsplrs estimate ... [--minimize-lights] [--refine-lights]
-                    [--dev-validate N --map <src.map> --q3map2 <exe> --base-path <dir>]
-                    Single-map variant of the converge loop: minimise light count
-                    (L0 greedy with SSE budget), photometric refine, and optionally
-                    a developer-only recompile-validation loop for algorithm refinement.
+bsplrs estimate ...  Default pipeline runs minimise-lights + photometric refine
+                     automatically. See "Quick start" above for the user-facing workflow;
+                     all `--no-*` opt-out flags and the developer-only `--dev-validate`
+                     are documented in the "All `estimate` flags" section.
 
 bsplrs dump-samples / build-synthetic-map — see bsplrs help
 ```
@@ -111,6 +143,28 @@ Adding another `(magic, version)` is a one-class change in
 `src/BspLightReSlopper/Bsp/Formats/`. Q3A maps are read-only because they typically ship with
 their `light` entities stripped at compile time, so they can't validate the estimator. **Jedi
 Outcast base maps preserve their light entities and are the verification dataset.**
+
+## Pre-release downloads
+
+Automated pre-release builds are published to [GitHub Releases](https://github.com/eldavier88/BspLightReSlopper/releases)
+on every push to `main`, tagged `v<version>-alpha.<run_number>`. Older pre-releases are
+preserved (never deleted) so you can pick any commit's binary.
+
+Each release includes framework-dependent single-file binaries (a few MB each) for:
+
+| RID | OS / arch |
+|---|---|
+| `bsplrs-…-win-x64.exe`   | Windows x64 |
+| `bsplrs-…-win-arm64.exe` | Windows ARM64 |
+| `bsplrs-…-linux-x64`     | Linux x64 |
+| `bsplrs-…-linux-arm64`   | Linux ARM64 (Raspberry Pi 4+, AWS Graviton, etc.) |
+| `bsplrs-…-osx-x64`       | macOS x64 (and Apple Silicon via Rosetta 2) |
+
+**Requirement:** the [.NET 5 runtime](https://dotnet.microsoft.com/download/dotnet/5.0) must
+be installed on the host. The bsplrs binaries are slim because they reuse the system runtime
+rather than bundling it. Apple Silicon users: download the `osx-x64` build — macOS will run
+it transparently under Rosetta 2 (the workload is CPU-only and a CLI tool, so the Rosetta
+perf hit is irrelevant).
 
 ## Algorithm sketch
 
@@ -149,11 +203,13 @@ loose .bsp / archive.pk3!maps/foo.bsp
        │       radius, pattern-search refinement, PVS-gated visibility,
        │       residual-peeling iteration, joint Gauss-Seidel refit.
        │
-       ├─► Optional: MinimizeLightCountGreedy (L0 budget, SSE tolerance)
-       ├─► Optional: PerceptualRefiner (photometric coordinate descent, no compile)
-       ├─► Optional: RecompileRefiner (inject → q3map2 recompile → pair texels in
-       │   world space → residual-driven per-light intensity+position adjustment,
-       │   iterate, keep best-iteration lights; "match the look" priority)
+       ├─► Default: MinimizeLightCountGreedy (L0 budget, SSE tolerance)
+       ├─► Default: PerceptualRefiner (photometric coordinate descent, no compile)
+       ├─► Developer-only: RecompileRefiner (inject → q3map2 recompile → pair texels
+       │   in world space → residual-driven per-light intensity+position adjustment,
+       │   iterate, keep best-iteration lights). NEVER runs in the default pipeline;
+       │   only triggered by --dev-validate / --iterate. Used during algorithm
+       │   development to validate iteration quality against ground-truth recompiles.
        │
        ▼
        EntFileWriter  ──►  <bsp>.ent

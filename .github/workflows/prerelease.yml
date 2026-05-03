@@ -11,17 +11,19 @@ jobs:
   build-test-publish:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        rid: [win-x64, linux-x64, osx-x64]
+        # net5.0 supports these RIDs. osx-arm64 is .NET 6+ only; Apple Silicon
+        # users run the osx-x64 build under Rosetta 2 (transparent, fast enough
+        # for a CLI tool that doesn't need native ARM perf).
+        rid: [win-x64, win-arm64, linux-x64, linux-arm64, osx-x64]
     steps:
       - uses: actions/checkout@v4
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: |
-            5.0.x
-            8.0.x
+          dotnet-version: 5.0.x
 
       - name: Restore
         run: dotnet restore
@@ -47,6 +49,8 @@ jobs:
             -r ${{ matrix.rid }} \
             --self-contained false \
             -p:PublishSingleFile=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true \
+            -p:DebugType=embedded \
             -p:Version=${{ steps.version.outputs.prefix }}-alpha.${{ github.run_number }}
 
       - name: Package artifact
@@ -54,13 +58,17 @@ jobs:
         run: |
           mkdir -p artifacts
           RID="${{ matrix.rid }}"
+          TAG="${{ steps.version.outputs.full }}"
           SRC="src/BspLightReSlopper/bin/Release/net5.0/${RID}/publish"
-          if [ "$RID" = "win-x64" ]; then
-            cp "${SRC}/bsplrs.exe" "artifacts/bsplrs-${RID}.exe"
-          else
-            cp "${SRC}/bsplrs" "artifacts/bsplrs-${RID}"
-            chmod +x "artifacts/bsplrs-${RID}"
-          fi
+          case "$RID" in
+            win-*)
+              cp "${SRC}/bsplrs.exe" "artifacts/bsplrs-${TAG}-${RID}.exe"
+              ;;
+            *)
+              cp "${SRC}/bsplrs" "artifacts/bsplrs-${TAG}-${RID}"
+              chmod +x "artifacts/bsplrs-${TAG}-${RID}"
+              ;;
+          esac
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -98,5 +106,5 @@ jobs:
           gh release create "${TAG}" \
             --prerelease \
             --title "Pre-release ${TAG}" \
-            --notes "Automated pre-release build. Commit: ${{ github.sha }}" \
+            --notes $'Automated pre-release build.\n\nCommit: ${{ github.sha }}\n\n**Requires the .NET 5 runtime on the host system** (https://dotnet.microsoft.com/download/dotnet/5.0). Binaries are framework-dependent single-file (a few MB). Apple Silicon: download the osx-x64 build; macOS will run it transparently under Rosetta 2.' \
             artifacts/*
