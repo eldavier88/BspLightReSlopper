@@ -5,8 +5,13 @@ using System.IO;
 using System.Linq;
 using System.Numerics;
 using System.Text;
+using BspLightReSlopper.Bsp;
+using BspLightReSlopper.Collision;
 using BspLightReSlopper.Estimation;
+using BspLightReSlopper.Lightmaps;
 using BspLightReSlopper.Sampling;
+using BspLightReSlopper.Surfaces;
+using BspLightReSlopper.Util;
 
 namespace BspLightReSlopper.Benchmarking
 {
@@ -58,10 +63,12 @@ namespace BspLightReSlopper.Benchmarking
                 try
                 {
                     var sw = Stopwatch.StartNew();
-                    var bsp = Bsp.BspFile.FromBytes(File.ReadAllBytes(path));
+                    var bsp = BspLoader.LoadFromBytes(File.ReadAllBytes(path));
                     var collision = new BspCollision(bsp);
                     var vis = new BspVis(bsp);
-                    var samples = TexelSampler.Sample(bsp, collision, log);
+                    var unpacked = SurfaceUnpacker.Unpack(bsp);
+                    var atlas = new LightmapAtlas(bsp.Lightmaps, bsp.LightmapAtlasCount);
+                    var samples = TexelSampler.Sample(bsp, unpacked, atlas, collision: collision);
                     if (samples.Samples.Count == 0)
                     {
                         log?.Warn($"  {name}: no texels; skipped");
