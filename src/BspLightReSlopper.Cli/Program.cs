@@ -1,7 +1,7 @@
 using System;
 using BspLightReSlopper.Cli;
 
-namespace BspLightReSlopper
+namespace BspLightReSlopper.Cli
 {
     public static class Program
     {
