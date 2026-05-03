@@ -701,7 +701,9 @@ namespace BspLightReSlopper.Estimation
                         float angle = AngleAttenuation(ndotL, options.HalfLambert);
                         if (angle <= 0) continue;
                         float g = angle / (d2 + fade2);
-                        float predict = (l.Color.X + l.Color.Y + l.Color.Z) * I * g / 3f;
+                        // P1.3: account for surface albedo in envelope prediction
+                        float albedoAvg = (samples[i].Albedo.X + samples[i].Albedo.Y + samples[i].Albedo.Z) / 3f;
+                        float predict = (l.Color.X + l.Color.Y + l.Color.Z) * I * g / 3f * albedoAvg;
                         float observed = (samples[i].Observed.X + samples[i].Observed.Y + samples[i].Observed.Z) / 3f;
                         if (observed < 1e-4f) continue;
                         if (predict / observed >= options.EnvelopeSupportingFraction && d2 > maxSupportDist2)
@@ -1124,9 +1126,10 @@ namespace BspLightReSlopper.Estimation
                     float angle = AngleAttenuation(ndotL, halfLambert);
                     if (angle <= 0f) continue;
                     float g = angle / (d2 + fade2);
-                    pr += Ivec.X * g;
-                    pg += Ivec.Y * g;
-                    pb += Ivec.Z * g;
+                    // P1.3: material-aware BRDF -- multiply diffuse prediction by albedo
+                    pr += s.Albedo.X * Ivec.X * g;
+                    pg += s.Albedo.Y * Ivec.Y * g;
+                    pb += s.Albedo.Z * Ivec.Z * g;
                 }
                 float eR = s.Observed.X - pr, eG = s.Observed.Y - pg, eB = s.Observed.Z - pb;
                 acc += eR * eR + eG * eG + eB * eB;

@@ -17,6 +17,7 @@ namespace BspLightReSlopper.Sampling
         public Vector3 World { get; init; }
         public Vector3 Normal { get; init; }
         public Vector3 Observed { get; init; }          // 0..1 RGB (raw)
+        public Vector3 Albedo { get; init; } = new Vector3(1, 1, 1); // P1.3: material diffuse colour (default white)
         public int AtlasIndex { get; init; }
         public int AtlasX { get; init; }
         public int AtlasY { get; init; }
