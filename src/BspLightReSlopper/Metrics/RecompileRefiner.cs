@@ -377,14 +377,15 @@ namespace BspLightReSlopper.Metrics
 
         private static List<LightDefinition> BuildLightDefs(List<EstimatedLight> lights, float q3Scale)
         {
-            // Normalise intensity to median-maps-to-300 (same rule as EstimateCommand uses
-            // in its .ent export) unless the caller has already applied a scale.
+            // Normalise intensity to q3 light-key units. Uses the shared IntensityCalibrator
+            // in median mode (matches EstimateCommand's default .ent export) unless the
+            // caller has already applied a scale via Options.Q3IntensityScale.
             float scale = q3Scale;
             if (q3Scale == 1f && lights.Count > 0)
             {
-                var sorted = lights.Select(l => l.Intensity).OrderBy(v => v).ToArray();
-                float median = sorted[sorted.Length / 2];
-                if (median > 1e-3f) scale = 300f / median;
+                var cal = BspLightReSlopper.Estimation.IntensityCalibrator.Calibrate(
+                    lights, inference: null, mode: BspLightReSlopper.Estimation.IntensityCalibrator.Mode.Median);
+                scale = cal.Scale;
             }
             var defs = new List<LightDefinition>(lights.Count);
             foreach (var l in lights)

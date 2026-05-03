@@ -294,19 +294,15 @@ namespace BspLightReSlopper.Cli
 
             // ----- Write .ent -----
             log.Section("output");
-            // Phase A intensities are in arbitrary fitting units. To get values in the
-            // q3map2 "light" key ballpark we normalise so the median-intensity guess maps to
-            // ~300 (typical JK2 base-map fixture). Phase B/C will replace this with a
-            // proper gamma+overbright-aware calibration once the heuristic is solid.
-            float scaleToQ3 = 1f;
-            float medianInternal = 0f;
-            if (result.Lights.Count > 0)
-            {
-                var sorted = result.Lights.Select(l => l.Intensity).OrderBy(v => v).ToArray();
-                medianInternal = sorted[sorted.Length / 2];
-                if (medianInternal > 1e-3f) scaleToQ3 = 300f / medianInternal;
-            }
-            log.Info($"intensity calibration: median internal={medianInternal:F1}, scale=*{scaleToQ3:F4} → median q3 light~300");
+            // Convert estimator-internal fit intensities to q3 `light` key values.
+            // Default mode = Median (300/median_internal), empirically validated against
+            // JK2 base maps. Physics mode inverts q3map2's gamma/overbright/lmscale
+            // write path; enable with --calibration physics. IntensityCalibrator logs
+            // both scales and warns on significant divergence.
+            var calMode = ParseCalibrationMode(args.Get("calibration"));
+            var calibration = BspLightReSlopper.Estimation.IntensityCalibrator.Calibrate(
+                result.Lights, infer, calMode, log: log);
+            float scaleToQ3 = calibration.Scale;
             // Classify each light's type (point/spot/linear). For spots we emit a
             // companion info_null target entity; the type-classifier is skipped for
             // blowout-seeded lights (already correct as point/spot from blow-out shape).
@@ -459,6 +455,19 @@ namespace BspLightReSlopper.Cli
             return Path.Combine(
                 Path.GetDirectoryName(Path.GetFullPath(trimmed)) ?? ".",
                 Path.GetFileNameWithoutExtension(trimmed));
+        }
+
+        private static BspLightReSlopper.Estimation.IntensityCalibrator.Mode ParseCalibrationMode(string? argValue)
+        {
+            // Default (argValue null or omitted) = Median, the empirically-validated mode.
+            if (string.IsNullOrWhiteSpace(argValue)) return BspLightReSlopper.Estimation.IntensityCalibrator.Mode.Median;
+            switch (argValue.Trim().ToLowerInvariant())
+            {
+                case "median": return BspLightReSlopper.Estimation.IntensityCalibrator.Mode.Median;
+                case "physics": return BspLightReSlopper.Estimation.IntensityCalibrator.Mode.Physics;
+                default:
+                    throw new ArgumentException($"--calibration must be 'median' or 'physics', got '{argValue}'");
+            }
         }
     }
 }
